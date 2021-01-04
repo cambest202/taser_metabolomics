@@ -151,16 +151,16 @@ model_rf <- caret::train(Response ~ .,
                          data = train_data,
                          method = "rf",
                          preProcess = c("scale", "center"),
-                         ntree = 250,
+                         ntree = 1000,
                          metric='Accuracy',
                          tuneGrid = tuneGrid,
                          trControl =  trainControl(method = "repeatedcv",
-                                                   number = 5,
-                                                   repeats = 5, 
+                                                   number = 10,
+                                                   repeats = 10, 
                                                    savePredictions = TRUE, 
                                                    verboseIter = FALSE, 
                                                    allowParallel = TRUE))
-
+ 
 plot(model_rf)
 print(model_rf)
 
