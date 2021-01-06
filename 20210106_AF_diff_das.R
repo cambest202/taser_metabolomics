@@ -165,6 +165,27 @@ AF_limma%>%
   labs(x='p-value',
        y='Frequency')
 
+# PCA of samples
+scaled_intensities <- scale(t(resp_differential_t))
+scaled_intensities[do.call(cbind, lapply(scaled_intensities, is.nan))] <- 0
+
+pca_data <- prcomp(scaled_intensities)
+pca_coord <- data.frame(pca_data$x)
+var_explained <- pca_data$sdev^2/sum(pca_data$sdev^2)
+var_explained[1:5]
+
+pca_coord$group <-as.factor(row.names(pca_coord))
+head(pca_coord$group )
+pca_coord$group[pca_coord$group %like% 'A'] <- 'A'
+pca_coord$group[pca_coord$group %like% 'F'] <- 'F'
+
+ggplot(pca_coord) + 
+  geom_point(size=3, 
+             aes(x=PC1,y=PC2, colour= group, fill= group))+
+  labs(x=paste0("PC1: ",round(var_explained[1]*100,1),"%"),
+       y=paste0("PC2: ",round(var_explained[2]*100,1),"%"))+
+theme_classic2()
+
 # Generate the model
 # Set training and testing data
 set.seed(42)
@@ -230,67 +251,52 @@ final$correct <- ifelse(final$predict == final$actual, 'Correct', 'Incorrect')
 summary(final$predicted == final$actual)
 
 imp <- model_rff$finalModel$importance
-#imp <- imp[order(imp, decreasing = TRUE), ]
+imp <- as.data.frame(imp)
+imp <- imp[order(imp$MeanDecreaseAccuracy, decreasing = TRUE), ]
 imp_peaks <- varImp(model_rff, scale = TRUE)
 plot(imp_peaks, top=10)
 imps <- as.data.frame(imp_peaks$importance)
 imps$Peak_ID <- rownames(imps)
 imps <- imps[,-1]
 colnames(imps)[1] <- 'Importance'
-imps <- subset(imps,imps$Importance >20)
+imps <- subset(imps,imps$Importance >30)
 imps$Peak_ID <- gsub('`','', imps$Peak_ID)
 imps$Peak_ID <- as.numeric(imps$Peak_ID)
 
 imps_hmdb <- inner_join(imps, peak_ID_HMDB, by='Peak_ID')
 imps_hmdb <- with(imps_hmdb,imps_hmdb[order(Importance),])
+imps_hmdb_id <- subset(imps_hmdb, imps_hmdb$Putative_Metabolite !='NA')
+imps_hmdb_id <- distinct(imps_hmdb_id, Putative_Metabolite, .keep_all = TRUE)
+imps_hmdb_id$Putative_Metabolite <- as.factor(imps_hmdb_id$Putative_Metabolite)
+imps_hmdb_id <- imps_hmdb_id[-46,]
 
-# Using plotly for feature importance visualisation----
-plotly_para <- function(){
-  title_feat <- list(
-    family = "Arial, sans-serif",
-    size = 18,
-    color = "black")
-  text_feat <- list(
-    family = "Old Standard TT, serif",
-    size = 14,
-    color = "black")
-  y_axis <- list(
-    title='Peak ID',
-    titlefont = title_feat,
-    showticklabels = TRUE,
-    tickfont = text_feat)
-  x_axis <- list(
-    title='Importance',
-    titlefont = title_feat,
-    showticklabels = TRUE,
-    tickfont = text_feat)
-}
+# Plot the annotated peaks from feature importance
+ggplot(imps_hmdb_id)+
+  geom_col(aes(reorder(Putative_Metabolite, Importance), 
+               Importance),
+           fill=0x3a5e84,
+           colour='black')+
+  coord_flip()+
+  theme_minimal()+
+  labs(y='Importance',
+       x='Putative Metabolite')+
+  theme(axis.text.y = element_text(size = 8))
 
-fig <-plot_ly(y=reorder(imps$Peak_ID, imps$Overall),
-              x=imps$Overall, 
-              data=imps,
-              type='bar',
-              orientation='h',
-              marker = list(color = 'rgba(0, 70, 300, 0.6)',
-                            line = list(color = 'rgba(50, 70, 96, 1.0)', width = 1)))
-fig <- fig %>% 
-  layout(yaxis = y_axis, xaxis = x_axis)
-fig
+
 
 ### Build linear models for the top peaks from feature selection for each of the disease measurements
-# DAS44
-resp_melt_top <- subset(resp_A_melt, resp_A_melt$Peak_ID %in% imps_hmdb$Peak_ID)
+# DAS44----
+resp_melt_top <- subset(resp_diff_melt, resp_diff_melt$Peak_ID %in% peak_ID_HMDB$Peak_ID)
 # make sure all disease measures are included in the melted df
 
-disease_lm <- function(melted_df, disease_measure){
-  ints_nested <- melted_df %>%
+ints_nested <- resp_melt_top %>%
     group_by (Peak_ID) %>%
     nest()
-  ints_unnested <- ints_nested %>%
+ints_unnested <- resp_melt_top %>%
     unnest(cols=c())
-  identical(melted_df, ints_unnested)
+identical(resp_diff_melt, ints_unnested)
   ints_lm <- ints_nested %>%
-    mutate(model = map(data, ~lm(formula = Peak_Intensity~disease_measure, data = .x)))
+    mutate(model = map(data, ~lm(formula = Peak_Intensity~DAS44, data = .x)))
   model_coef_nested <- ints_lm %>%
     mutate(coef=map(model, ~tidy(.x)))
   model_coef <- model_coef_nested %>%
@@ -302,32 +308,255 @@ disease_lm <- function(melted_df, disease_measure){
   best_fit <- model_perf %>%
     top_n(n=4, wt=r.squared)
   bestest_fit <- with(model_perf,model_perf[order(-r.squared),])
-  best_augmented <- bestest_fit %>% 
+  
+  top_20_peaks <- head(bestest_fit, 20)
+  top_50_peaks <- head(bestest_fit, 50)
+  top_100_peaks <- head(bestest_fit, 100)
+  top_200_peaks <- head(bestest_fit, 200)
+  
+  best_augmented <- top_200_peaks %>% 
     mutate(augmented = map(model, ~augment(.x))) %>% 
     unnest(augmented)
   best_augmented_sig <- subset(best_augmented, best_augmented$p.value< 0.05)
-  best_augmented_sig$Peak_ID <- as.numeric(best_augmented_sig$Peak_ID)best_aug_sing <- distinct(best_augmented, Peak_ID, .keep_all = TRUE)
-  adj_p <- p.adjust(best_aug_sing$p.value, method='BH')
-  best_aug_sing$adj_p <- adj_p
-  print(head(best_aug_sing))
-}
+  best_augmented_sig$Peak_ID <- as.numeric(best_augmented_sig$Peak_ID)
+  adj_p <- p.adjust(best_augmented_sig$p.value, method='BH')
+  best_augmented_sig$adj_p <- adj_p
 
-ggplot(best_augmented_sig, aes(x = DAS44, y=Peak_Intensity)) +
+best_adj <- subset(best_augmented_sig, best_augmented_sig$adj_p < 0.05) 
+best_adj_hmdb <- inner_join(best_adj, peak_ID_HMDB, by='Peak_ID')
+best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='NA')
+sig_peaks <- distinct(best_adj_hmdb, Peak_ID, .keep_all = TRUE)
+
+ggplot(best_adj_hmdb,aes(x = DAS44, y=Peak_Intensity)) +
   geom_point() + 
-  theme_CHIPS()+
   stat_cor(method = "spearman", 
            vjust=1, hjust=0.1,
            size=4)+
   geom_line(aes(y = .fitted), color = "red") +
-  facet_wrap(~Peak_ID, scales = "free_y")+
+  facet_wrap(~Putative_Metabolite, scales = "free_y")+
   theme(strip.background = element_rect(fill='white', 
                                         size=1.5),
         strip.text.x= element_text(face = "bold.italic",
                                    size=12))+
   labs(x='ΔDAS44',
-       y='ΔPeak Intensity')
+       y='ΔPeak Intensity')+
+  theme_minimal()
 
 
-# CRP
+# CRP----
+ints_nested <- resp_melt_top %>%
+  group_by (Peak_ID) %>%
+  nest()
+ints_unnested <- resp_melt_top %>%
+  unnest(cols=c())
+identical(resp_diff_melt, ints_unnested)
+ints_lm <- ints_nested %>%
+  mutate(model = map(data, ~lm(formula = Peak_Intensity~CRP, data = .x)))
+model_coef_nested <- ints_lm %>%
+  mutate(coef=map(model, ~tidy(.x)))
+model_coef <- model_coef_nested %>%
+  unnest(coef)
+model_perf_nested <- ints_lm %>%
+  mutate(fit=map(model, ~glance(.x)))
+model_perf <- model_perf_nested%>%
+  unnest(fit)
+best_fit <- model_perf %>%
+  top_n(n=4, wt=r.squared)
+bestest_fit <- with(model_perf,model_perf[order(-r.squared),])
+
+top_20_peaks <- head(bestest_fit, 20)
+top_50_peaks <- head(bestest_fit, 50)
+top_100_peaks <- head(bestest_fit, 100)
+
+best_augmented <- top_50_peaks %>% 
+  mutate(augmented = map(model, ~augment(.x))) %>% 
+  unnest(augmented)
+best_augmented_sig <- subset(best_augmented, best_augmented$p.value< 0.05)
+best_augmented_sig$Peak_ID <- as.numeric(best_augmented_sig$Peak_ID)
+adj_p <- p.adjust(best_augmented_sig$p.value, method='BH')
+best_augmented_sig$adj_p <- adj_p
+
+best_adj <- subset(best_augmented_sig, best_augmented_sig$adj_p < 0.05) 
+best_adj_hmdb <- inner_join(best_adj, peak_ID_HMDB, by='Peak_ID')
+best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='NA')
+sig_peaks <- distinct(best_adj_hmdb, Peak_ID, .keep_all = TRUE)
+best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Peak_ID %in% sig_peaks$Peak_ID)
+
+ggplot(best_adj_hmdb,aes(x = CRP, y=Peak_Intensity)) +
+  geom_point() + 
+  stat_cor(method = "spearman", 
+           vjust=1, hjust=0.1,
+           size=4)+
+  geom_line(aes(y = .fitted), color = "red") +
+  facet_wrap(~Putative_Metabolite, scales = "free_y")+
+  theme(strip.background = element_rect(fill='white', 
+                                        size=1.5),
+        strip.text.x= element_text(face = "bold.italic",
+                                   size=12))+
+  labs(x='ΔCRP',
+       y='ΔPeak Intensity')+
+  theme_minimal()+
+  xlim(-200,10)
 
 
+# ESR----
+ints_nested <- resp_melt_top %>%
+  group_by (Peak_ID) %>%
+  nest()
+ints_unnested <- resp_melt_top %>%
+  unnest(cols=c())
+identical(resp_diff_melt, ints_unnested)
+ints_lm <- ints_nested %>%
+  mutate(model = map(data, ~lm(formula = Peak_Intensity~ESR, data = .x)))
+model_coef_nested <- ints_lm %>%
+  mutate(coef=map(model, ~tidy(.x)))
+model_coef <- model_coef_nested %>%
+  unnest(coef)
+model_perf_nested <- ints_lm %>%
+  mutate(fit=map(model, ~glance(.x)))
+model_perf <- model_perf_nested%>%
+  unnest(fit)
+best_fit <- model_perf %>%
+  top_n(n=4, wt=r.squared)
+bestest_fit <- with(model_perf,model_perf[order(-r.squared),])
+
+top_20_peaks <- head(bestest_fit, 20)
+top_50_peaks <- head(bestest_fit, 50)
+top_100_peaks <- head(bestest_fit, 100)
+
+best_augmented <- top_50_peaks %>% 
+  mutate(augmented = map(model, ~augment(.x))) %>% 
+  unnest(augmented)
+best_augmented_sig <- subset(best_augmented, best_augmented$p.value< 0.05)
+best_augmented_sig$Peak_ID <- as.numeric(best_augmented_sig$Peak_ID)
+adj_p <- p.adjust(best_augmented_sig$p.value, method='BH')
+best_augmented_sig$adj_p <- adj_p
+
+best_adj <- subset(best_augmented_sig, best_augmented_sig$adj_p < 0.05) 
+best_adj_hmdb <- inner_join(best_adj, peak_ID_HMDB, by='Peak_ID')
+best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='NA')
+sig_peaks <- distinct(best_adj_hmdb, Peak_ID, .keep_all = TRUE)
+best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Peak_ID %in% sig_peaks$Peak_ID)
+
+ggplot(best_adj_hmdb,aes(x = ESR, y=Peak_Intensity)) +
+  geom_point() + 
+  stat_cor(method = "spearman", 
+           vjust=1, hjust=0.1,
+           size=4)+
+  geom_line(aes(y = .fitted), color = "red") +
+  facet_wrap(~Putative_Metabolite, scales = "free_y")+
+  theme(strip.background = element_rect(fill='white', 
+                                        size=1.5),
+        strip.text.x= element_text(face = "bold.italic",
+                                   size=12))+
+  labs(x='ΔESR',
+       y='ΔPeak Intensity')+
+  theme_minimal()
+
+# HAQ----
+ints_nested <- resp_melt_top %>%
+  group_by (Peak_ID) %>%
+  nest()
+ints_unnested <- resp_melt_top %>%
+  unnest(cols=c())
+identical(resp_diff_melt, ints_unnested)
+ints_lm <- ints_nested %>%
+  mutate(model = map(data, ~lm(formula = Peak_Intensity~HAQ, data = .x)))
+model_coef_nested <- ints_lm %>%
+  mutate(coef=map(model, ~tidy(.x)))
+model_coef <- model_coef_nested %>%
+  unnest(coef)
+model_perf_nested <- ints_lm %>%
+  mutate(fit=map(model, ~glance(.x)))
+model_perf <- model_perf_nested%>%
+  unnest(fit)
+best_fit <- model_perf %>%
+  top_n(n=4, wt=r.squared)
+bestest_fit <- with(model_perf,model_perf[order(-r.squared),])
+
+top_20_peaks <- head(bestest_fit, 20)
+top_50_peaks <- head(bestest_fit, 50)
+top_100_peaks <- head(bestest_fit, 100)
+
+best_augmented <- top_50_peaks %>% 
+  mutate(augmented = map(model, ~augment(.x))) %>% 
+  unnest(augmented)
+best_augmented_sig <- subset(best_augmented, best_augmented$p.value< 0.05)
+best_augmented_sig$Peak_ID <- as.numeric(best_augmented_sig$Peak_ID)
+adj_p <- p.adjust(best_augmented_sig$p.value, method='BH')
+best_augmented_sig$adj_p <- adj_p
+
+best_adj <- subset(best_augmented_sig, best_augmented_sig$adj_p < 0.05) 
+best_adj_hmdb <- inner_join(best_adj, peak_ID_HMDB, by='Peak_ID')
+best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='NA')
+sig_peaks <- distinct(best_adj_hmdb, Peak_ID, .keep_all = TRUE)
+best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Peak_ID %in% sig_peaks$Peak_ID)
+
+ggplot(best_adj_hmdb,aes(x = HAQ, y=Peak_Intensity)) +
+  geom_point() + 
+  stat_cor(method = "spearman", 
+           vjust=1, hjust=0.1,
+           size=4)+
+  geom_line(aes(y = .fitted), color = "red") +
+  facet_wrap(~Putative_Metabolite, scales = "free_y")+
+  theme(strip.background = element_rect(fill='white', 
+                                        size=1.5),
+        strip.text.x= element_text(face = "bold.italic",
+                                   size=12))+
+  labs(x='ΔHAQ',
+       y='ΔPeak Intensity')+
+  theme_minimal()
+
+# PVAS----
+ints_nested <- resp_melt_top %>%
+  group_by (Peak_ID) %>%
+  nest()
+ints_unnested <- resp_melt_top %>%
+  unnest(cols=c())
+identical(resp_diff_melt, ints_unnested)
+ints_lm <- ints_nested %>%
+  mutate(model = map(data, ~lm(formula = Peak_Intensity~PVAS, data = .x)))
+model_coef_nested <- ints_lm %>%
+  mutate(coef=map(model, ~tidy(.x)))
+model_coef <- model_coef_nested %>%
+  unnest(coef)
+model_perf_nested <- ints_lm %>%
+  mutate(fit=map(model, ~glance(.x)))
+model_perf <- model_perf_nested%>%
+  unnest(fit)
+best_fit <- model_perf %>%
+  top_n(n=4, wt=r.squared)
+bestest_fit <- with(model_perf,model_perf[order(-r.squared),])
+
+top_20_peaks <- head(bestest_fit, 20)
+top_50_peaks <- head(bestest_fit, 50)
+top_100_peaks <- head(bestest_fit, 100)
+
+best_augmented <- top_50_peaks %>% 
+  mutate(augmented = map(model, ~augment(.x))) %>% 
+  unnest(augmented)
+best_augmented_sig <- subset(best_augmented, best_augmented$p.value< 0.05)
+best_augmented_sig$Peak_ID <- as.numeric(best_augmented_sig$Peak_ID)
+adj_p <- p.adjust(best_augmented_sig$p.value, method='BH')
+best_augmented_sig$adj_p <- adj_p
+
+best_adj <- subset(best_augmented_sig, best_augmented_sig$adj_p < 0.05) 
+best_adj_hmdb <- inner_join(best_adj, peak_ID_HMDB, by='Peak_ID')
+best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='NA')
+sig_peaks <- distinct(best_adj_hmdb, Peak_ID, .keep_all = TRUE)
+best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Peak_ID %in% sig_peaks$Peak_ID)
+
+ggplot(best_adj_hmdb,aes(x = PVAS, y=Peak_Intensity)) +
+  geom_point() + 
+  stat_cor(method = "spearman", 
+           vjust=1, hjust=0.1,
+           size=4)+
+  geom_line(aes(y = .fitted), color = "red") +
+  facet_wrap(~Putative_Metabolite, scales = "free_y")+
+  theme(strip.background = element_rect(fill='white', 
+                                        size=1.5),
+        strip.text.x= element_text(face = "bold.italic",
+                                   size=12))+
+  labs(x='ΔPVAS',
+       y='ΔPeak Intensity')+
+  theme_minimal()
