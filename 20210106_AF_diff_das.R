@@ -705,4 +705,295 @@ metabolite_counts%>%
   labs(x='Putative Metabolite',
        y='Frequency')
 
+### Correlation analysis- which metabolites correlate with each other?
+# Dendrogram
+resp_diff_cor <- resp_diff[,c(14:1471)]
+resp_diff_cor_t <- as.data.frame(t(resp_diff_cor))
+resp_diff_cor_t$Peak_ID <- rownames(resp_diff_cor_t)
+resp_diff_cor_t$Peak_ID <- gsub('X','', resp_diff_cor_t$Peak_ID)
+resp_diff_cor_t$Peak_ID <- as.numeric(resp_diff_cor_t$Peak_ID)
+
+resp_diff_cor_t_hmdb <- inner_join(resp_diff_cor_t,peak_ID_HMDB, by='Peak_ID')
+resp_diff_cor_t_hmdb <- subset(resp_diff_cor_t_hmdb, resp_diff_cor_t_hmdb$Putative_Metabolite !='NA')
+resp_diff_cor_t_hmdb <- distinct(resp_diff_cor_t_hmdb, Putative_Metabolite, .keep_all = TRUE)
+
+metabolite_list <- rownames(resp_diff_cor_t_hmdb)
+rownames(resp_diff_cor_t_hmdb) <- resp_diff_cor_t_hmdb$Putative_Metabolite
+resp_diff_cor_t_hmdb <- resp_diff_cor_t_hmdb[1:63]
+
+hc_complete <- hclust(dist(resp_diff_cor_t_hmdb), method='complete')
+hc_average <- hclust(dist(resp_diff_cor_t_hmdb), method='average')
+hc_single <- hclust(dist(resp_diff_cor_t_hmdb), method='single')
+
+par(mfrow=c(1,3)) 
+plot(hc_complete,main='Complete Linkage', xlab='', ylab='', sub='',cex=.9)
+plot(hc_average,main='Average Linkage', xlab='', ylab='', sub='',cex=.9)
+plot(hc_single,main='Single Linkage', xlab='', ylab='', sub='',cex=.9)
+dev.off()
+plot(hc_complete,main='Complete Linkage', xlab='', ylab='', sub='',cex=.9)
+
+# Heatmap
+resp_diff_cor_heat <- t(resp_diff_cor_t_hmdb)
+cormat <- round(cor(resp_diff_cor_heat),2)
+melted_cormat <- melt(cormat)
+
+# Reorder the correlation matrix
+cormat <- reorder_cormat(cormat)
+upper_tri <- get_upper_tri(cormat)
+# Melt the correlation matrix
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+# Create a ggheatmap
+ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+  geom_tile(color = "white")+
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+                       midpoint = 0, limit = c(-1,1), space = "Lab") +
+theme_light()+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+                                   size =8, hjust = 1))+
+  coord_fixed()
+# Print the heatmap
+print(ggheatmap)
+
+dev.off()
+
+### Kegg pathway analysis
+library(FELLA)
+met_list_kegg <- read.csv('metabolite.list.csv', header=TRUE)
+met_list_kegg$kegg[met_list_kegg$kegg ==''] <- NA
+
+kegg_list <- as.character(met_list_kegg$kegg)
+set.seed(1)
+# Filter the hsa01100 overview pathway
+graph <- buildGraphFromKEGGREST(organism = "hsa", filter.path = c("01100"))
+tmpdir <- paste0(tempdir(), "/my_database")
+unlink(tmpdir, recursive = TRUE)
+buildDataFromGraph(
+  keggdata.graph = graph,
+  databaseDir = tmpdir,
+  internalDir = FALSE,
+  matrices = "none",
+  normality = "diffusion",
+  niter = 100)
+
+fella.data <- loadKEGGdata(
+  databaseDir = tmpdir,
+  internalDir = FALSE,
+  loadMatrix = "none"
+)
+
+kegg_list<- na.omit(kegg_list)
+analysis_taser <- enrich(
+  compounds = kegg_list,
+  data = fella.data,
+  method = "diffusion",
+  approx = "normality")
+
+analysis_taser %>%
+  getInput %>%
+  getName(data = fella.data)
+
+plot(
+  analysis_taser,
+  method = "diffusion",
+  data = fella.data,
+  plotLegend = FALSE)
+
+g_taser <-  generateResultsGraph(
+  object = analysis_taser,
+  data = fella.data,
+  method = "diffusion")
+
+tab_taser <- generateResultsTable(
+  object = analysis_taser,
+  data = fella.data,
+  method = "diffusion")
+
+tab_taser[tab_taser$Entry.type == "pathway", ]
+
+BiocManager::install("plotGraph")
+install.packages('plotGraph')
+library(plotGraph)
+g_go <- addGOToGraph(graph=g_taser,
+                     GOterm = "GO:0005739",
+                     godata.options = list(
+                       OrgDb = "org.Hs.eg.db", ont = "CC"),
+                     mart.options = list(biomart = "ensembl", dataset = "hsapiens_gene_ensembl"))
+
+  
+plotGraph(
+  g_go,
+  nlimit = 200)
+dev.off()
+
+?plotGraph
+
+mytriangle <- function(coords, v=NULL, params) {
+  vertex.color <- params("vertex", "color")
+  if (length(vertex.color) != 1 && !is.null(v)) {
+    vertex.color <- vertex.color[v]
+  }
+  vertex.size <- 1/200 * params("vertex", "size")
+  if (length(vertex.size) != 1 && !is.null(v)) {
+    vertex.size <- vertex.size[v]
+  }
+  
+  
+  
+  graphics::symbols(
+    x = coords[, 1], y = coords[, 2], bg = vertex.color,
+    stars = cbind(vertex.size, vertex.size, vertex.size),
+    add = TRUE, inches = FALSE)
+}
+
+
+plotGraph <- function(
+  graph = NULL, 
+  layout = FALSE,
+  graph.layout = NULL, 
+  plotLegend = TRUE, 
+  plot.fun = "plot.igraph", 
+  NamesAsLabels = TRUE, 
+  ...) {
+  
+  if (vcount(graph) == 0) {
+    warning("The graph is empty and won't be plotted.")
+    return(invisible())
+  }
+  
+  # If there is GO cellular component data available, plot it..!
+  if ("GO.simil" %in% list.vertex.attributes(graph)) {
+    GO.simil <- V(graph)$GO.simil
+    GO.annot <- TRUE
+  } else {
+    GO.annot <- FALSE
+  }
+  
+  # triangle vertex shape
+  add.vertex.shape(
+    "triangle", clip = vertex.shapes("circle")$clip, plot = mytriangle)
+  #########################################################
+  
+  # Nodes in the input are in V(graph)$input
+  graph.input <- V(graph)$input
+  graph.com <- as.character(V(graph)$com)
+  
+  # Vertex shape
+  vertex.shape <- rep("circle", vcount(graph))
+  vertex.shape[graph.input] <- "square"
+  
+  vertex.number <- vcount(graph)
+  
+  graph.asp <- 1
+  if (is.null(graph.layout)) graph.layout <- layout.auto(graph)
+  
+  graph.layout <- layout.norm(
+    graph.layout, 
+    xmin = -1, 
+    xmax = 1, 
+    ymin = -1, 
+    ymax = 1)
+  
+  ## Define vertex colour
+  mapSolidColor <- c(
+    "1" = "#CD0000",
+    "2" = "#CD96CD",
+    "3" = "#FFA200",
+    "4" = "#8DB6CD",
+    "5" = "#548B54"
+  )
+  vertex.color <- vapply(V(graph), function(y) {
+    solidColor <- mapSolidColor[graph.com[y]]
+    if (!GO.annot) return(solidColor)
+    
+    GO.y <- GO.simil[y]
+    if (!is.na(GO.y)) {
+      if (GO.y < 0.5) solidColor <- "#FFD500"
+      else if (GO.y < 0.7) solidColor <- "#FF5500"
+      else if (GO.y < 0.9) solidColor <- "#FF0000"
+      else solidColor <- "#B300FF"
+    }
+    
+    solidColor
+  }, FUN.VALUE = character(1))
+  
+  # Vertex frame color
+  vertex.frame.color <- rep("black", vcount(graph))
+  if (GO.annot) {
+    vertex.frame.color[!is.na(GO.simil)] <- "#CD0000"
+    vertex.shape[!is.na(GO.simil)] <- "triangle"
+  }
+  
+  # Vertex size
+  mapSize <- c(
+    "1" = 7,
+    "2" = 5.5,
+    "3" = 4.25,
+    "4" = 3.5,
+    "5" = 3
+  )
+  vertex.size <- mapSize[graph.com]
+  vertex.size[graph.input] <- 4
+  vertex.size <- vertex.size*(300/vcount(graph))^(1/3)
+  
+  # Labels
+  vertex.label.dist <- 0.1*(300/vcount(graph))^(1/3)
+  vertex.label.degree <- -pi/2
+  
+  if (NamesAsLabels) {
+    vertex.label <- V(graph)$label
+  } else {
+    vertex.label <- V(graph)$name
+  }
+  
+  options <- as.list(substitute(list(...)))[-1L]
+  args.shared <- list(
+    layout = graph.layout, 
+    vertex.size = vertex.size, 
+    vertex.label = vertex.label, 
+    vertex.label.dist = vertex.label.dist, 
+    vertex.label.color = vertex.color, 
+    vertex.label.degree = vertex.label.degree, 
+    vertex.frame.color = vertex.frame.color, 
+    vertex.color = vertex.color, 
+    vertex.shape = vertex.shape,
+    edge.color = "#000000AA", 
+    edge.arrow.size = 0.25,
+    asp = graph.asp)
+  
+  if (plot.fun == "plot.igraph") {
+    do.call(
+      plot.fun, 
+      c(list(x = graph), args.shared, options)
+    )
+  } 
+  if (plot.fun == "tkplot") {
+    do.call(
+      plot.fun, 
+      c(list(graph = graph), args.shared, options)
+    )
+  }
+  
+  # Plot the legend
+  if (plotLegend) plotLegend(GO.annot = GO.annot, cex = 0.5)
+  
+  mapPrefix <- c(
+    "1" = "",
+    "2" = "md:",
+    "3" = "ec:",
+    "4" = "rn:",
+    "5" = "cpd:"
+  )
+  if (!layout) {
+    return(invisible(NULL))
+  } else  {
+    out.complete <- data.frame(
+      x = graph.layout[, 1], 
+      y = graph.layout[, 2], 
+      out.id = paste0(mapPrefix[V(graph)$com], V(graph)$name), 
+      out.name = V(graph)$label, 
+      stringsAsFactors = FALSE)
+    
+    return(invisible(out.complete))
+  }
+}
 
