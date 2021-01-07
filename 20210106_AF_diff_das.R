@@ -23,6 +23,10 @@ theme_fish <- function () {
     )
 }
 
+remotes::install_github("csdaw/ggprism")
+library(ggprism)
+
+
 ###libraries------
 library(ggplot2)
 library(tidyverse) 
@@ -70,6 +74,7 @@ sample_sheet = read.table (file="20200318_Taser_SampleSheet.csv", header=TRUE, r
 patient_metadata <- read.csv(file='20190713_Taser_PatientMetadata.csv', header=TRUE, row.names=1)
 novel_peak_data <- read.csv(file='20200430_Taser_NEG_PeakIntensities.csv', header=TRUE, row.names=1)
 
+peak_ID_HMDB[13,5] <- '4-Hydroxybutyric acid'
 names(sample_sheet)[2] <- 'Sample_Name'
 peak_IDs$Peak_ID <- rownames(peak_IDs)
 peak_IDs$Peak_ID  <- as.numeric(peak_IDs$Peak_ID )
@@ -188,61 +193,85 @@ theme_classic2()
 
 # Generate the model
 # Set training and testing data
+#colnames(resp_diff_ML_2)[2:1459] <- paste0('X', colnames(resp_diff_ML_2)[2:1459])
 set.seed(42)
-index <- createDataPartition(resp_diff_ML_2$DAS44_Response, p = 0.85, list = FALSE)
+index <- createDataPartition(resp_diff_ML_2$DAS44_Response, p = 0.7, list = FALSE)
 train_data <- resp_diff_ML_2[index, ]
 test_data  <- resp_diff_ML_2[-index, ]
 
-# optimal ntrees? ----
-store_maxtrees <- list()
-for (ntree in c(250, 300, 350, 400, 450, 500, 550, 600, 800 )) {
-  set.seed(42)
-  rf_maxtrees <- train(Response~.,
-                       data = train_data,
-                       method = "rf",
-                       metric = "Accuracy",
-                       tuneGrid = tuneGrid,
-                       trControl = trainControl(method = "repeatedcv",
-                                                number = 10,
-                                                repeats = 5, 
-                                                savePredictions = TRUE, 
-                                                verboseIter = FALSE, 
-                                                allowParallel = TRUE),
-                       importance = TRUE,
-                       ntree = ntree)
-  key <- toString(ntree)
-  store_maxtrees[[key]] <- rf_maxtrees
-}
-results_tree <- resamples(store_maxtrees)
-summary(results_tree)
-
-### Run the model ----
+### caret model ----
 tuneGrid <- expand.grid(.mtry = c(1:sqrt(1458)))
 set.seed(42)
 model_rff <- caret::train(DAS44_Response~.,
                           data = train_data,
                           method = "rf",
                           metric = "Accuracy",
-                          tuneGrid = tuneGrid,
+                          tuneGrid=tuneGrid,
                           trControl = trainControl(method = "repeatedcv",
-                                                   number =5,
-                                                   repeats = 3, 
+                                                   number =10,
+                                                   repeats = 5, 
                                                    savePredictions = TRUE, 
                                                    verboseIter = FALSE, 
                                                    allowParallel = TRUE),
                           importance = TRUE,
-                          ntree = 500)
+                          ntree = 300)
 
-plot(model_rff)
-print(model_rff)
+##------
+customRF <- list(type = "Classification",
+                 library = "randomForest",
+                 loop = NULL)
+customRF$parameters <- data.frame(parameter = c("mtry", "ntree"),
+                                  class = rep("numeric", 2),
+                                  label = c("mtry", "ntree"))
 
-test_results <- predict(model_rff, newdata = test_data)
+customRF$grid <- function(x, y, len = NULL, search = "grid") {}
+
+customRF$fit <- function(x, y, wts, param, lev, last, weights, classProbs) {
+  randomForest(x, y,
+               mtry = param$mtry,
+               ntree=param$ntree)
+}
+
+#Predict label
+customRF$predict <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  predict(modelFit, newdata)
+
+#Predict prob
+customRF$prob <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+  predict(modelFit, newdata, type = "prob")
+
+customRF$sort <- function(x) x[order(x[,1]),]
+customRF$levels <- function(x) x$classes
+
+cores <- makeCluster(detectCores()-1)
+registerDoParallel(cores = cores)
+# train model
+control <- trainControl(method="repeatedcv", 
+                        number=10, 
+                        repeats=3,
+                        allowParallel = TRUE)
+
+tunegrid <- expand.grid(.mtry=c(1:sqrt(1458)),.ntree=c(300,500,700))
+
+set.seed(42)
+custom <- caret::train(DAS44_Response~., data=train_data, 
+                       method=customRF, 
+                       metric='Accuracy', 
+                       tuneGrid=tunegrid, 
+                       trControl=control)
+
+summary(custom)
+
+plot(custom)
+stopCluster(cores)
+
+test_results <- predict(custom, newdata = test_data)
 summary(test_results)
-summary(test_data$Response)
+summary(test_data$DAS44_Response)
 confusionMatrix(test_results, test_data$DAS44_Response)
 
 final <- data.frame(actual = test_data$DAS44_Response,
-                    predict(model_rff, newdata = test_data, type = "prob"))
+                    predict(custom, newdata = test_data, type = "prob"))
 final$predicted <- 0
 final$predicted[final$Positive > final$Negative] <- 'Positive'
 final$predicted[final$Positive < final$Negative] <- 'Negative'
@@ -250,16 +279,16 @@ final$correct <- 0
 final$correct <- ifelse(final$predict == final$actual, 'Correct', 'Incorrect')
 summary(final$predicted == final$actual)
 
-imp <- model_rff$finalModel$importance
+imp <- custom$finalModel$importance
 imp <- as.data.frame(imp)
 imp <- imp[order(imp$MeanDecreaseAccuracy, decreasing = TRUE), ]
 imp_peaks <- varImp(model_rff, scale = TRUE)
-plot(imp_peaks, top=10)
+plot(imp_peaks, top=20)
 imps <- as.data.frame(imp_peaks$importance)
 imps$Peak_ID <- rownames(imps)
 imps <- imps[,-1]
 colnames(imps)[1] <- 'Importance'
-imps <- subset(imps,imps$Importance >30)
+imps <- subset(imps,imps$Importance >20)
 imps$Peak_ID <- gsub('`','', imps$Peak_ID)
 imps$Peak_ID <- as.numeric(imps$Peak_ID)
 
@@ -268,7 +297,6 @@ imps_hmdb <- with(imps_hmdb,imps_hmdb[order(Importance),])
 imps_hmdb_id <- subset(imps_hmdb, imps_hmdb$Putative_Metabolite !='NA')
 imps_hmdb_id <- distinct(imps_hmdb_id, Putative_Metabolite, .keep_all = TRUE)
 imps_hmdb_id$Putative_Metabolite <- as.factor(imps_hmdb_id$Putative_Metabolite)
-imps_hmdb_id <- imps_hmdb_id[-46,]
 
 # Plot the annotated peaks from feature importance
 ggplot(imps_hmdb_id)+
@@ -278,7 +306,7 @@ ggplot(imps_hmdb_id)+
            colour='black')+
   coord_flip()+
   theme_minimal()+
-  labs(y='Importance',
+  labs(y='Relative Importance',
        x='Putative Metabolite')+
   theme(axis.text.y = element_text(size = 8))
 
@@ -327,6 +355,10 @@ best_adj_hmdb <- inner_join(best_adj, peak_ID_HMDB, by='Peak_ID')
 best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='NA')
 sig_peaks <- distinct(best_adj_hmdb, Peak_ID, .keep_all = TRUE)
 
+DAS_metabolites <- best_adj_hmdb
+colnames(DAS_metabolites)[17] <-'Disease_Measure'
+DAS_metabolites$Disease_Measure_Type <- 'DAS44'
+
 ggplot(best_adj_hmdb,aes(x = DAS44, y=Peak_Intensity)) +
   geom_point() + 
   stat_cor(method = "spearman", 
@@ -341,7 +373,6 @@ ggplot(best_adj_hmdb,aes(x = DAS44, y=Peak_Intensity)) +
   labs(x='ΔDAS44',
        y='ΔPeak Intensity')+
   theme_minimal()
-
 
 # CRP----
 ints_nested <- resp_melt_top %>%
@@ -382,6 +413,10 @@ best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='NA')
 sig_peaks <- distinct(best_adj_hmdb, Peak_ID, .keep_all = TRUE)
 best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Peak_ID %in% sig_peaks$Peak_ID)
 
+CRP_metabolites <- best_adj_hmdb
+colnames(CRP_metabolites)[17] <-'Disease_Measure'
+CRP_metabolites$Disease_Measure_Type <- 'CRP'
+
 ggplot(best_adj_hmdb,aes(x = CRP, y=Peak_Intensity)) +
   geom_point() + 
   stat_cor(method = "spearman", 
@@ -397,7 +432,6 @@ ggplot(best_adj_hmdb,aes(x = CRP, y=Peak_Intensity)) +
        y='ΔPeak Intensity')+
   theme_minimal()+
   xlim(-200,10)
-
 
 # ESR----
 ints_nested <- resp_melt_top %>%
@@ -437,6 +471,10 @@ best_adj_hmdb <- inner_join(best_adj, peak_ID_HMDB, by='Peak_ID')
 best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='NA')
 sig_peaks <- distinct(best_adj_hmdb, Peak_ID, .keep_all = TRUE)
 best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Peak_ID %in% sig_peaks$Peak_ID)
+
+ESR_metabolites <- best_adj_hmdb
+colnames(ESR_metabolites)[17] <-'Disease_Measure'
+ESR_metabolites$Disease_Measure_Type <- 'ESR'
 
 ggplot(best_adj_hmdb,aes(x = ESR, y=Peak_Intensity)) +
   geom_point() + 
@@ -492,6 +530,10 @@ best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='NA')
 sig_peaks <- distinct(best_adj_hmdb, Peak_ID, .keep_all = TRUE)
 best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Peak_ID %in% sig_peaks$Peak_ID)
 
+HAQ_metabolites <- best_adj_hmdb
+colnames(HAQ_metabolites)[17] <-'Disease_Measure'
+HAQ_metabolites$Disease_Measure_Type <- 'HAQ'
+
 ggplot(best_adj_hmdb,aes(x = HAQ, y=Peak_Intensity)) +
   geom_point() + 
   stat_cor(method = "spearman", 
@@ -546,6 +588,10 @@ best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='NA')
 sig_peaks <- distinct(best_adj_hmdb, Peak_ID, .keep_all = TRUE)
 best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Peak_ID %in% sig_peaks$Peak_ID)
 
+PVAS_metabolites <- best_adj_hmdb
+colnames(PVAS_metabolites)[17] <-'Disease_Measure'
+PVAS_metabolites$Disease_Measure_Type <- 'PVAS'
+
 ggplot(best_adj_hmdb,aes(x = PVAS, y=Peak_Intensity)) +
   geom_point() + 
   stat_cor(method = "spearman", 
@@ -560,3 +606,103 @@ ggplot(best_adj_hmdb,aes(x = PVAS, y=Peak_Intensity)) +
   labs(x='ΔPVAS',
        y='ΔPeak Intensity')+
   theme_minimal()
+# GHVAS ----
+ints_nested <- resp_melt_top %>%
+  group_by (Peak_ID) %>%
+  nest()
+ints_unnested <- resp_melt_top %>%
+  unnest(cols=c())
+identical(resp_diff_melt, ints_unnested)
+ints_lm <- ints_nested %>%
+  mutate(model = map(data, ~lm(formula = Peak_Intensity~GHVAS, data = .x)))
+model_coef_nested <- ints_lm %>%
+  mutate(coef=map(model, ~tidy(.x)))
+model_coef <- model_coef_nested %>%
+  unnest(coef)
+model_perf_nested <- ints_lm %>%
+  mutate(fit=map(model, ~glance(.x)))
+model_perf <- model_perf_nested%>%
+  unnest(fit)
+best_fit <- model_perf %>%
+  top_n(n=4, wt=r.squared)
+bestest_fit <- with(model_perf,model_perf[order(-r.squared),])
+
+top_20_peaks <- head(bestest_fit, 20)
+top_50_peaks <- head(bestest_fit, 50)
+top_100_peaks <- head(bestest_fit, 100)
+top_200_peaks <- head(bestest_fit, 200)
+
+best_augmented <- top_200_peaks %>% 
+  mutate(augmented = map(model, ~augment(.x))) %>% 
+  unnest(augmented)
+best_augmented_sig <- subset(best_augmented, best_augmented$p.value< 0.05)
+best_augmented_sig$Peak_ID <- as.numeric(best_augmented_sig$Peak_ID)
+adj_p <- p.adjust(best_augmented_sig$p.value, method='BH')
+best_augmented_sig$adj_p <- adj_p
+
+best_adj <- subset(best_augmented_sig, best_augmented_sig$adj_p < 0.05) 
+best_adj_hmdb <- inner_join(best_adj, peak_ID_HMDB, by='Peak_ID')
+best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='NA')
+sig_peaks <- distinct(best_adj_hmdb, Peak_ID, .keep_all = TRUE)
+
+ghvas_metabolites <-best_adj_hmdb 
+colnames(ghvas_metabolites)[17] <-'Disease_Measure'
+ghvas_metabolites$Disease_Measure_Type <- 'GHVAS'
+
+ggplot(best_adj_hmdb,aes(x = GHVAS, y=Peak_Intensity)) +
+  geom_point() + 
+  stat_cor(method = "spearman", 
+           vjust=1, hjust=0.1,
+           size=4)+
+  geom_line(aes(y = .fitted), color = "red") +
+  facet_wrap(~Putative_Metabolite, scales = "free_y")+
+  theme(strip.background = element_rect(fill='white', 
+                                        size=1.5),
+        strip.text.x= element_text(face = "bold.italic",
+                                   size=12))+
+  labs(x='ΔGHVAS',
+       y='ΔPeak Intensity')+
+  theme_minimal()
+
+### Find shared metabolites across the above disease measure associations and the feature selection from RF -----
+# first, which metabolites appear more than once across the disease measures?
+mets_reduce <- function(disease_df){
+  disease_met <- disease_df[c(28:29)]
+  disease_met <- distinct(disease_met, Putative_Metabolite, .keep_all = TRUE)
+}
+
+DAS_met <- mets_reduce(DAS_metabolites)
+CRP_met <- mets_reduce(CRP_metabolites)
+ESR_met <- mets_reduce(ESR_metabolites)
+HAQ_met <- mets_reduce(HAQ_metabolites)
+PVAS_met <- mets_reduce(PVAS_metabolites)
+GHVAS_met <- mets_reduce(ghvas_metabolites)
+
+shared_mets <- rbind.data.frame(DAS_metabolites,
+                                CRP_metabolites,
+                                ESR_metabolites,
+                                HAQ_metabolites,
+                                PVAS_metabolites, 
+                                ghvas_metabolites)
+
+shared_mets_reduced <- rbind.data.frame(DAS_met,
+                                        CRP_met,
+                                        ESR_met,
+                                        HAQ_met,
+                                        PVAS_met,
+                                        GHVAS_met)
+
+metabolite_counts <- as.data.frame(as.matrix(table(shared_mets_reduced$Putative_Metabolite, shared_mets_reduced$Disease_Measure_Type)))
+names(metabolite_counts)<- c('Putative_Metabolite', 'Disease_Measure','Frequency')
+
+metabolite_counts%>%
+  ggplot()+
+  geom_col(aes(reorder(Putative_Metabolite, Frequency),
+               Frequency,
+               fill=Disease_Measure))+
+  theme_pubclean()+
+  coord_flip()+
+  labs(x='Putative Metabolite',
+       y='Frequency')
+
+
