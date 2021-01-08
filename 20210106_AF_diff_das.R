@@ -282,7 +282,7 @@ summary(final$predicted == final$actual)
 imp <- custom$finalModel$importance
 imp <- as.data.frame(imp)
 imp <- imp[order(imp$MeanDecreaseAccuracy, decreasing = TRUE), ]
-imp_peaks <- varImp(model_rff, scale = TRUE)
+imp_peaks <- varImp(custom, scale = TRUE)
 plot(imp_peaks, top=20)
 imps <- as.data.frame(imp_peaks$importance)
 imps$Peak_ID <- rownames(imps)
@@ -309,8 +309,6 @@ ggplot(imps_hmdb_id)+
   labs(y='Relative Importance',
        x='Putative Metabolite')+
   theme(axis.text.y = element_text(size = 8))
-
-
 
 ### Build linear models for the top peaks from feature selection for each of the disease measurements
 # DAS44----
@@ -730,7 +728,22 @@ plot(hc_complete,main='Complete Linkage', xlab='', ylab='', sub='',cex=.9)
 plot(hc_average,main='Average Linkage', xlab='', ylab='', sub='',cex=.9)
 plot(hc_single,main='Single Linkage', xlab='', ylab='', sub='',cex=.9)
 dev.off()
-plot(hc_complete,main='Complete Linkage', xlab='', ylab='', sub='',cex=.9)
+plot(hc_complete,main='Complete Linkage', xlab='', ylab='', sub='',cex=.9,
+     )
+
+library(ggdendro)
+dendr <- dendro_data(hc_complete, type="rectangle") 
+ggplot() + 
+  geom_segment(data=segment(dendr), aes(x=x, y=y, xend=xend, yend=yend)) + 
+  geom_text(data=label(dendr), aes(x=x, y=y, label=label, hjust=0), size=3) +
+  coord_flip() + 
+  scale_y_reverse(expand=c(0.2, 1)) + 
+  theme(axis.line.y=element_blank(),
+        axis.ticks.y=element_blank(),
+        axis.text.y=element_blank(),
+        axis.title.y=element_blank(),
+        panel.background=element_rect(fill="white"),
+        panel.grid=element_blank())
 
 # Heatmap
 resp_diff_cor_heat <- t(resp_diff_cor_t_hmdb)
@@ -792,12 +805,6 @@ analysis_taser %>%
   getInput %>%
   getName(data = fella.data)
 
-plot(
-  analysis_taser,
-  method = "diffusion",
-  data = fella.data,
-  plotLegend = FALSE)
-
 g_taser <-  generateResultsGraph(
   object = analysis_taser,
   data = fella.data,
@@ -808,7 +815,11 @@ tab_taser <- generateResultsTable(
   data = fella.data,
   method = "diffusion")
 
-tab_taser[tab_taser$Entry.type == "pathway", ]
+pathways_taser <- tab_taser[tab_taser$Entry.type == "pathway", ]
+pathways_taser_flex <- flextable(pathways_taser)%>%
+  theme_vanilla()%>%
+  autofit(add_w = 0, add_h = 0)%>%
+  align(align = 'center', part= 'all')
 
 g_go <- addGOToGraph(graph=g_taser,
                      GOterm = "GO:0005739",
@@ -818,7 +829,7 @@ g_go <- addGOToGraph(graph=g_taser,
 
 
 set.seed(42)
-plot(g_taser,
+plot(g_go,
      data = fella.data,
      vertex.size=2,
      plotLegend = TRUE,
@@ -844,13 +855,13 @@ analysis.taser
 nlimit <- 150
 vertex.label.cex <- .5
 
-plot(
+ab <- plot.igraph(
   analysis.taser,
   method='diffusion',
   data=fella.data,
-  nlimit=nlimit,
+  nlimit=250,
+  plimit=25,
   vertex.label.cex= vertex.label.cex)
-
 
 g <- generateResultsGraph(
 object = analysis.taser,
@@ -862,10 +873,11 @@ g_go <- addGOToGraph(graph=g,
                      GOterm = "GO:0005739",
                      godata.options = list(
                        OrgDb = "org.Hs.eg.db", ont = "CC"),
-                     mart.options = list(biomart = "ensembl", dataset = "hsapiens_gene_ensembl"))
+                     mart.options = list(biomart = "ensembl", 
+                                         dataset = "hsapiens_gene_ensembl"))
 
-plotGraph(g_go,
-          vertex.label.cex= vertex.label.cex)
+set.seed(42)
+plot_graph(g_go)
 
 tab.all <- generateResultsTable(
   method='diffusion',
@@ -878,3 +890,148 @@ tab.enzyme <- generateEnzymesTable(
   nlimit=100,
   object=analysis.taser,
   data=fella.data)
+
+# which peaks from the feature importance are found in the shared metabolites list?
+fi_cor_mets <- subset(imps_hmdb_id, imps_hmdb_id$Peak_ID %in% shared_mets$Peak_ID)
+
+ggplot(fi_cor_mets)+
+  geom_col(aes(reorder(Putative_Metabolite, Importance), 
+               Importance),
+           fill=0x3a5e84,
+           colour='black')+
+  coord_flip()+
+  theme_minimal()+
+  labs(y='Relative Importance',
+       x='Putative Metabolite')+
+  theme(axis.text.y = element_text(size = 8))
+
+names(met_list_kegg)[2] <- 'Putative_Metabolite'
+met_list_kegg$Putative_Metabolite <- as.factor(met_list_kegg$Putative_Metabolite)
+fi_cor_kegg <- inner_join(fi_cor_mets,met_list_kegg, by='Putative_Metabolite')
+update_kegg_shared <- fi_cor_kegg
+update_kegg_shared$kegg[update_kegg_shared$kegg ==''] <- NA
+update_kegg_list <- update_kegg_shared$kegg
+write.csv(update_kegg_shared,'20210108_AF_diff_das_kegg_list.csv')
+
+analysis_update <- enrich(
+  compounds = update_kegg_list,
+  data = fella.data,
+  method = "diffusion",
+  approx = "normality")
+
+analysis_update %>%
+  getInput %>%
+  getName(data = fella.data)
+
+g_update <-  generateResultsGraph(
+  object = analysis_update,
+  data = fella.data,
+  method = "diffusion")
+
+tab_taser_2 <- generateResultsTable(
+  object = analysis_update,
+  data = fella.data,
+  method = "diffusion")
+
+update_pathways <- tab_taser_2[tab_taser_2$Entry.type == "pathway", ]
+update_pathways_print <- update_pathways[,-2]
+
+pathway_flex <- flextable(update_pathways_print)%>%
+  theme_vanilla()%>%
+  autofit(add_w = 0, add_h = 0)%>%
+  align(align = 'center', part= 'all')
+
+
+g_go <- addGOToGraph(graph=g_update,
+                     GOterm = "GO:0005739",
+                     godata.options = list(
+                       OrgDb = "org.Hs.eg.db", ont = "CC"),
+                     mart.options = list(biomart = "ensembl", dataset = "hsapiens_gene_ensembl"))
+
+set.seed(42)
+plot_graph(g_go)
+
+tab.all <- generateResultsTable(
+  method='diffusion',
+  nlimit=100,
+  object=analysis_update,
+  data=fella.data)
+
+tab.enzyme <- generateEnzymesTable(
+  method='diffusion',
+  nlimit=100,
+  object=analysis_update,
+  data=fella.data)
+
+# attempt to split the pathway analysis, plotting only the pathways of interest
+# Alanine, aspartate and glutamate metabolism
+# Filter the hsa01100 overview pathway
+graph <- buildGraphFromKEGGREST(organism = "hsa", filter.path = c("00220"))
+tmpdir <- paste0(tempdir(), "/my_database")
+unlink(tmpdir, recursive = TRUE)
+buildDataFromGraph(
+  keggdata.graph = graph,
+  databaseDir = tmpdir,
+  internalDir = FALSE,
+  matrices = "none",
+  normality = "diffusion",
+  niter = 100)
+
+fella.data <- loadKEGGdata(
+  databaseDir = tmpdir,
+  internalDir = FALSE,
+  loadMatrix = "none"
+)
+
+analysis_update <- enrich(
+  compounds = update_kegg_list,
+  data = fella.data,
+  method = "diffusion",
+  approx = "normality")
+
+?enrich
+analysis_update %>%
+  getInput %>%
+  getName(data = fella.data)
+
+g_update <-  generateResultsGraph(
+  object = analysis_update,
+  data = fella.data,
+  threshold = 0.001,
+  method = "diffusion")
+
+tab_taser_2 <- generateResultsTable(
+  object = analysis_update,
+  data = fella.data,
+  method = "diffusion")
+
+update_pathways <- tab_taser_2[tab_taser_2$Entry.type == "pathway", ]
+update_pathways_print <- update_pathways[,-2]
+
+pathway_flex <- flextable(update_pathways_print)%>%
+  theme_vanilla()%>%
+  autofit(add_w = 0, add_h = 0)%>%
+  align(align = 'center', part= 'all')
+
+
+g_go <- addGOToGraph(graph=g_update,
+                     GOterm = "GO:0005739",
+                     godata.options = list(
+                       OrgDb = "org.Hs.eg.db", ont = "CC"),
+                     mart.options = list(biomart = "ensembl", dataset = "hsapiens_gene_ensembl"))
+
+set.seed(42)
+plot_graph(g_update)
+
+tab.all <- generateResultsTable(
+  method='diffusion',
+  nlimit=100,
+  object=analysis_update,
+  data=fella.data)
+
+tab.enzyme <- generateEnzymesTable(
+  method='diffusion',
+  nlimit=100,
+  object=analysis_update,
+  data=fella.data)
+
