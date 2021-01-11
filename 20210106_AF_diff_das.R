@@ -145,20 +145,27 @@ AF_limma$Sig <- 0
 AF_limma$Sig <- ifelse(AF_limma$adj.P.Val <0.05, 1, 0) 
 AF_limma$Sig_Peaks <- ifelse(AF_limma$adj.P.Val<0.001 & AF_limma$identification != '', AF_limma$Peak_ID, '')
 
-ggplot(data=AF_limma, aes(x=logFC, y=-log10(P.Value), 
+AF_limma_hmdb <- inner_join(AF_limma, peak_ID_HMDB, by='Peak_ID')
+AF_limma_hmdb$Sig_Peaks <- ifelse(AF_limma_hmdb$adj.P.Val<0.05, AF_limma_hmdb$Putative_Metabolite, '')
+
+AF_limma_hmdb_dist <- distinct(AF_limma_hmdb, Putative_Metabolite, .keep_all = TRUE)
+
+ggplot(data=AF_limma_hmdb_dist, aes(x=logFC, y=-log10(P.Value), 
                           colour=Sig, 
                           group=Sig)) +
-  geom_point () +
+  geom_point (alpha=0.7) +
   theme_minimal() +
   labs (x='LogFC',
         y='-Log p-value') +
   geom_label_repel(aes(x = logFC, y = -log10(P.Value), label = Sig_Peaks),
-                   box.padding = 1,
+                   box.padding =1,
+                   max.overlaps = Inf,
                    position = position_jitter(seed = 1),
-                   arrow = arrow(length = unit(0.015, "npc"))) +  
+                   arrow = arrow(length = unit(0.0015, "npc"))) +  
   theme(legend.position = "none",
         plot.title = element_text(size = rel(1.5), hjust = 0.5),
-        axis.title = element_text(size = rel(1.25)))
+        axis.title = element_text(size = rel(1.25)))+
+  ylim(0,30)
 
 # Histogram of p-values 
 AF_limma%>%
@@ -297,6 +304,8 @@ imps_hmdb <- with(imps_hmdb,imps_hmdb[order(Importance),])
 imps_hmdb_id <- subset(imps_hmdb, imps_hmdb$Putative_Metabolite !='NA')
 imps_hmdb_id <- distinct(imps_hmdb_id, Putative_Metabolite, .keep_all = TRUE)
 imps_hmdb_id$Putative_Metabolite <- as.factor(imps_hmdb_id$Putative_Metabolite)
+
+write.csv(imps_hmdb_id, '20210111_AF_diff_das_FI_metabolites.csv')
 
 # Plot the annotated peaks from feature importance
 ggplot(imps_hmdb_id)+
@@ -911,7 +920,7 @@ fi_cor_kegg <- inner_join(fi_cor_mets,met_list_kegg, by='Putative_Metabolite')
 update_kegg_shared <- fi_cor_kegg
 update_kegg_shared$kegg[update_kegg_shared$kegg ==''] <- NA
 update_kegg_list <- update_kegg_shared$kegg
-write.csv(update_kegg_shared,'20210108_AF_diff_das_kegg_list.csv')
+#write.csv(update_kegg_shared,'20210108_AF_diff_das_kegg_list.csv')
 
 analysis_update <- enrich(
   compounds = update_kegg_list,
@@ -926,6 +935,7 @@ analysis_update %>%
 g_update <-  generateResultsGraph(
   object = analysis_update,
   data = fella.data,
+  plot.fun= tkplot,
   method = "diffusion")
 
 tab_taser_2 <- generateResultsTable(
@@ -949,7 +959,7 @@ g_go <- addGOToGraph(graph=g_update,
                      mart.options = list(biomart = "ensembl", dataset = "hsapiens_gene_ensembl"))
 
 set.seed(42)
-plot_graph(g_go)
+plot_graph(g_update)
 
 tab.all <- generateResultsTable(
   method='diffusion',
@@ -997,7 +1007,6 @@ analysis_update %>%
 g_update <-  generateResultsGraph(
   object = analysis_update,
   data = fella.data,
-  threshold = 0.001,
   method = "diffusion")
 
 tab_taser_2 <- generateResultsTable(
@@ -1034,4 +1043,64 @@ tab.enzyme <- generateEnzymesTable(
   nlimit=100,
   object=analysis_update,
   data=fella.data)
+
+### Directly investigating differential abundance of metabolites of interest
+resp_ints_melt <- resp_ints[c(3,9:1466)]
+resp_ints_melt <- melt(resp_ints_melt)
+names(resp_ints_melt) <- c('Sample','Peak_ID','Peak_Intensity')
+
+stat_test <- resp_ints_melt %>%
+  group_by(Peak_ID) %>%
+  rstatix::wilcox_test(Peak_Intensity ~ Sample) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance()
+
+
+resp_ints_stats <- inner_join(resp_ints_melt, stat_test, by='Peak_ID')
+resp_ints_stats$Peak_ID_2 <- resp_ints_stats$Peak_ID
+resp_ints_stats$Peak_ID <- gsub('X', '', resp_ints_stats$Peak_ID)
+resp_ints_stats$Peak_ID <- as.numeric(resp_ints_stats$Peak_ID)
+
+resp_ints_stats_hmdb <- inner_join(resp_ints_stats, peak_ID_HMDB, by='Peak_ID')
+resp_ints_stats_hmdb_id <- subset(resp_ints_stats_hmdb, resp_ints_stats_hmdb$Putative_Metabolite !='NA')  
+
+resp_ints_stats_dist_A <- subset(resp_ints_stats_hmdb_id, resp_ints_stats_hmdb_id$Sample == 'A')  %>%
+  distinct(Peak_ID, .keep_all = TRUE)
+
+resp_ints_stats_dist_F <- subset(resp_ints_stats_hmdb_id, resp_ints_stats_hmdb_id$Sample == 'F')  %>%
+  distinct(Peak_ID, .keep_all = TRUE)
+
+resp_ints_stats_hmdb_comb <- rbind.data.frame(resp_ints_stats_dist_A ,resp_ints_stats_dist_F)
+
+#write.csv(resp_ints_stats_hmdb, '20210111_AF_diff_das.csv')
+
+resp_ints_stats_hmdb_comb$Sample <- as.factor(resp_ints_stats_hmdb_comb$Sample)
+resp_ints_stats_hmdb_comb$Peak_Intensity <- as.numeric(resp_ints_stats_hmdb_comb$Peak_Intensity)
+resp_ints_stats_hmdb_comb$p.adj <- signif(resp_ints_stats_hmdb_comb$p.adj,3)
+ab <-resp_ints_stats_hmdb_comb %>%
+  subset(resp_ints_stats_hmdb_comb$p.adj < 0.05)
+ab <- as.data.frame(ab[c(2,17)])
+ab <- distinct(ab, Putative_Metabolite, .keep_all = TRUE)
+
+
+diff_analysis <- function(peak_ID, position){
+  resp_ints_stats_hmdb_id %>%
+    subset(Peak_ID == `peak_ID`)%>%
+    ggplot(aes(Sample, Peak_Intensity,
+               fill=Sample))+
+    theme_light()+
+    geom_violin()+
+    geom_boxplot(width=0.1, color="grey", alpha=0.2) +
+    
+    stat_pvalue_manual(
+      resp_ints_stats_hmdb_comb[resp_ints_stats_hmdb_comb$Peak_ID == `peak_ID`,], 
+      y.position = position,
+      label = "p.adj")+
+    theme(legend.position = 'none')+
+    labs(y='Peak Intensity')
+}
+
+diff_analysis(582, 25.2)
+
+  
 
