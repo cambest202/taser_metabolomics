@@ -1,4 +1,4 @@
-## AF baseline analysis and association of metabolites with DAS44. Standardising the approach
+## AF differential analysis and association of metabolites with XRay Sharp Score
 
 ### ggplot theme------
 theme_fish <- function () { 
