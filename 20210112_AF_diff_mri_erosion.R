@@ -95,7 +95,7 @@ mri_resp <- inner_join(mri_erosion, resp_diff, by='Sample_Name')
 mri_melt <- mri_resp[,c(1,17:1474)]
 mri_melt <- melt(mri_melt)
 mri_melt$DAS44 <- mri_resp$DAS44
-mri_melt$mri_pre_limma <- mri_resp$ΔMRI_Erosion
+mri_melt$MRI_Erosion <- mri_resp$ΔMRI_Erosion
 mri_melt$CRP <- mri_resp$CRP
 mri_melt$ESR <- mri_resp$ESR
 mri_melt$HAQ <- mri_resp$HAQ
@@ -348,3 +348,24 @@ ggplot(best_adj_hmdb,aes(x = MRI_Erosion, y=Peak_Intensity)) +
   theme_minimal()+
   xlim(-2,5)
 
+### Directly investigating differential abundance of metabolites of interest
+mri_melt_top$MRI_Response <- 0
+mri_melt_top$MRI_Response[mri_melt_top$MRI_Erosion >=2] <- 'Negative'
+mri_melt_top$MRI_Response[mri_melt_top$MRI_Erosion <2] <- 'Positive'
+
+stat_test <- mri_melt_top %>%
+  group_by(Peak_ID) %>%
+  rstatix::wilcox_test(Peak_Intensity ~ MRI_Response) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance()
+
+write.csv(stat_test, '20210113_AF_diff_mri_erosion_stats.csv')
+
+stat_test%>%
+  mutate(Colour = ifelse(p < 0.05, "P.Value < 0.05", "P.Value > 0.05")) %>%
+  ggplot(aes(p))+
+  geom_histogram(aes(fill=Colour),binwidth=0.02, colour='black')+
+  theme_pubclean()+
+  theme(legend.title = element_blank())+
+  labs(x='p-value',
+       y='Frequency')

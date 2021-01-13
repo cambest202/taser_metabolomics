@@ -1,4 +1,4 @@
-## AF differential analysis and association of metabolites with MRI Erosion Score Outcomes
+## AF differential analysis and association of metabolites with MRI Oedema Score Outcomes
 
 ### ggplot theme------
 theme_fish <- function () { 
@@ -86,13 +86,13 @@ peak_metadata$Peak_ID_test <- peak_metadata$Peak_ID
 
 # Which metabolites over the 18 months are associated with the erosion imaging score outcomes after 18 months of treatment?
 # Xray and MRI should be done independently
-# MRI Erosion
+# MRI Oedema
 names(mri_erosion)[1] <- 'Sample_Name'
 mri_resp <- inner_join(mri_erosion, resp_diff, by='Sample_Name')
 mri_melt <- mri_resp[,c(1,17:1474)]
 mri_melt <- melt(mri_melt)
 mri_melt$DAS44 <- mri_resp$DAS44
-mri_melt$MRI_Synovitis <- mri_resp$ΔMRI_Synovitis
+mri_melt$MRI_Oedema <- mri_resp$ΔMRI_Oedema
 mri_melt$CRP <- mri_resp$CRP
 mri_melt$ESR <- mri_resp$ESR
 mri_melt$HAQ <- mri_resp$HAQ
@@ -102,25 +102,25 @@ mri_melt$RAI <- mri_resp$RAI
 mri_melt$SJC <- mri_resp$SJC
 names(mri_melt)[1:3] <- c('Sample_Name', 'Peak_ID', 'Peak_Intensity')
 
-mri_resp$Syno_Response <- 0
-mri_pre_limma <- mri_resp[, c(3,1475,17:1474)]
-mean(mri_pre_limma$ΔMRI_Synovitis)
-median(mri_pre_limma$ΔMRI_Synovitis)
-histogram(mri_pre_limma$ΔMRI_Synovitis)
+mri_resp$Oedema_Response <- 0
+mri_pre_limma <- mri_resp[, c(4,1475,17:1474)]
+mean(mri_pre_limma$ΔMRI_Oedema)
+median(mri_pre_limma$ΔMRI_Oedema)
+histogram(mri_pre_limma$ΔMRI_Oedema)
 
-mri_pre_limma$Syno_Response[mri_pre_limma$ΔMRI_Synovitis >=-6.5] <- 'Negative'
-mri_pre_limma$Syno_Response[mri_pre_limma$ΔMRI_Synovitis < -6.5] <- 'Positive'
+mri_pre_limma$Oedema_Response[mri_pre_limma$ΔMRI_Oedema >=-2] <- 'Negative'
+mri_pre_limma$Oedema_Response[mri_pre_limma$ΔMRI_Oedema < -2] <- 'Positive'
 mri_pre_limma_2 <- mri_pre_limma
 
 mri_pre_limma %>%
-  ggplot(aes(length(Syno_Response),
-             fill=Syno_Response))+
+  ggplot(aes(length(Oedema_Response),
+             fill=Oedema_Response))+
   geom_histogram()+
-  facet_wrap(~Syno_Response)+
+  facet_wrap(~Oedema_Response)+
   theme(legend.position = 'none')
 
 mri_pre_limma <- mri_pre_limma[,-1]
-rownames(mri_pre_limma) <- paste0(rownames(mri_pre_limma), mri_pre_limma$Syno_Response)
+rownames(mri_pre_limma) <- paste0(rownames(mri_pre_limma), mri_pre_limma$Oedema_Response)
 mri_pre_limma <- mri_pre_limma[,-1]
 mri_pre_limma_t <- t(mri_pre_limma)
 
@@ -160,7 +160,7 @@ ggplot(data=mri_limma_hmdb, aes(x=logFC, y=-log10(P.Value),
   theme_light() +
   labs (x='LogFC',
         y='-Log p-value',
-        title='MRI Synovitis: Differential Analysis of Metabolites \nBetween Erosion Scoring Outcomes') +
+        title='MRI Oedema: Differential Analysis of Metabolites \nBetween Oedema Scoring Outcomes') +
   geom_text_repel(aes(x = logFC, y = -log10(P.Value), label = Sig_Peaks),
                   box.padding =1,
                   max.overlaps = Inf,
@@ -179,11 +179,6 @@ mri_limma%>%
   theme(legend.title = element_blank())+
   labs(x='p-value',
        y='Frequency')
-
-if (!requireNamespace("BiocManager", quietly = TRUE))
-  install.packages("BiocManager")
-
-BiocManager::install("qvalue")
 
 # PCA of samples
 scaled_intensities <- scale(t(mri_pre_limma_t))
@@ -210,19 +205,19 @@ ggplot(pca_coord) +
 # Set training and testing data
 mri_pre_limma_2 <- mri_pre_limma_2[,-1]
 set.seed(42)
-index <- createDataPartition(mri_pre_limma_2$Syno_Response, p = 0.7, list = FALSE)
+index <- createDataPartition(mri_pre_limma_2$Oedema_Response, p = 0.85, list = FALSE)
 train_data <- mri_pre_limma_2[index, ]
 test_data  <- mri_pre_limma_2[-index, ]
 tunegrid <- expand.grid(.mtry=c(1:sqrt(1458)))
 set.seed(42)
-model_rf <- caret::train(Syno_Response~.,
+model_rf <- caret::train(Oedema_Response~.,
                          data = train_data,
                          method = "rf",
                          metric = "Accuracy",
                          tuneGrid=tunegrid,
                          trControl = trainControl(method = "repeatedcv",
-                                                  number =5,
-                                                  repeats = 3, 
+                                                  number =10,
+                                                  repeats = 5, 
                                                   savePredictions = TRUE, 
                                                   verboseIter = FALSE, 
                                                   allowParallel = TRUE),
@@ -236,11 +231,11 @@ plot(model_rf)
 
 test_results <- predict(model_rf, newdata = test_data)
 summary(test_results)
-test_data$Syno_Response <- as.factor(test_data$Syno_Response)
-summary(test_data$Syno_Response)
-confusionMatrix(test_results, test_data$Syno_Response)
+test_data$Oedema_Response <- as.factor(test_data$Oedema_Response)
+summary(test_data$Oedema_Response)
+confusionMatrix(test_results, test_data$Oedema_Response)
 
-final <- data.frame(actual = test_data$Syno_Response,
+final <- data.frame(actual = test_data$Oedema_Response,
                     predict(model_rf, newdata = test_data, type = "prob"))
 final$predicted <- 0
 final$predicted[final$Positive > final$Negative] <- 'Positive'
@@ -269,7 +264,7 @@ imps_hmdb_id <- subset(imps_hmdb, imps_hmdb$Putative_Metabolite !='NA')
 imps_hmdb_id <- distinct(imps_hmdb_id, Putative_Metabolite, .keep_all = TRUE)
 imps_hmdb_id$Putative_Metabolite <- as.factor(imps_hmdb_id$Putative_Metabolite)
 
-write.csv(imps_hmdb_id, '20210113_AF_mri_syno_FI.csv')
+write.csv(imps_hmdb_id, '20210113_AF_mri_oed_FI.csv')
 
 # Plot the annotated peaks from feature importance
 ggplot(imps_hmdb_id)+
@@ -295,7 +290,7 @@ ints_unnested <- mri_melt_top %>%
   unnest(cols=c())
 identical(mri_melt_top, ints_unnested)
 ints_lm <- ints_nested %>%
-  mutate(model = map(data, ~lm(formula = Peak_Intensity~MRI_Synovitis, data = .x)))
+  mutate(model = map(data, ~lm(formula = Peak_Intensity~MRI_Oedema, data = .x)))
 model_coef_nested <- ints_lm %>%
   mutate(coef=map(model, ~tidy(.x)))
 model_coef <- model_coef_nested %>%
@@ -329,10 +324,13 @@ best_adj_hmdb <- inner_join(best_adj, peak_ID_HMDB, by='Peak_ID')
 best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='NA')
 best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite != 'Citrate')
 
-sig_peaks <- distinct(best_adj_hmdb, Peak_ID, .keep_all = TRUE)
-sig_peaks <- sig_peaks[-4,]
+sig_peaks <- distinct(best_adj_hmdb, Putative_Metabolite, .keep_all = TRUE)
+sig_peaks <- distinct(sig_peaks, HMDB, .keep_all = TRUE)
+sig_peaks <- sig_peaks[-1,]
 
-ggplot(best_adj_hmdb,aes(x = MRI_Synovitis, y=Peak_Intensity)) +
+best_adj_hmdb <- subset(best_adj_hmdb,best_adj_hmdb$Peak_ID %in% sig_peaks$Peak_ID)
+
+ggplot(best_adj_hmdb,aes(x = MRI_Oedema, y=Peak_Intensity)) +
   geom_point() + 
   stat_cor(method = "spearman", 
            vjust=1, hjust=0.1,
@@ -343,23 +341,23 @@ ggplot(best_adj_hmdb,aes(x = MRI_Synovitis, y=Peak_Intensity)) +
                                         size=1.5),
         strip.text.x= element_text(face = "bold.italic",
                                    size=12))+
-  labs(x='ΔMRI Synovitis',
+  labs(x='ΔMRI Oedema',
        y='ΔPeak Intensity')+
   theme_minimal()
 
 
 ### Directly investigating differential abundance of metabolites of interest
-mri_melt_top$Syno_Response <- 0
-mri_melt_top$Syno_Response[mri_melt_top$MRI_Synovitis >=-6.5] <- 'Negative'
-mri_melt_top$Syno_Response[mri_melt_top$MRI_Synovitis < -6.5] <- 'Positive'
+mri_melt_top$Oedema_Response <- 0
+mri_melt_top$Oedema_Response[mri_melt_top$MRI_Oedema >=-2] <- 'Negative'
+mri_melt_top$Oedema_Response[mri_melt_top$MRI_Oedema < -2] <- 'Positive'
 
 stat_test <- mri_melt_top %>%
   group_by(Peak_ID) %>%
-  rstatix::wilcox_test(Peak_Intensity ~ Syno_Response) %>%
+  rstatix::wilcox_test(Peak_Intensity ~ Oedema_Response) %>%
   adjust_pvalue(method = "BH") %>%
   add_significance()
 
-write.csv(stat_test, '20210113_AF_diff_syno_stats.csv')
+write.csv(stat_test, '20210113_AF_diff_oedema_stats.csv')
 
 stat_test%>%
   mutate(Colour = ifelse(p < 0.05, "P.Value < 0.05", "P.Value > 0.05")) %>%
