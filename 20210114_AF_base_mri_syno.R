@@ -151,8 +151,10 @@ mri_limma$Sig <- ifelse(mri_limma$adj.P.Val <0.05, 1, 0)
 mri_limma$Sig_Peaks <- ifelse(mri_limma$P.Value<0.05 & mri_limma$identification != '', mri_limma$Peak_ID, '')
 
 mri_limma_hmdb <- inner_join(mri_limma, peak_ID_HMDB, by='Peak_ID')
-mri_limma_hmdb$Sig_Peaks <- ifelse(mri_limma_hmdb$P.Value<0.05, mri_limma_hmdb$Putative_Metabolite, '')
 mri_limma_hmdb <- distinct(mri_limma_hmdb, Peak_ID, .keep_all = TRUE)
+mri_limma_hmdb$Putative_Metabolite[mri_limma_hmdb$Putative_Metabolite =='Citrate'] <-NA
+mri_limma_hmdb$Putative_Metabolite[mri_limma_hmdb$Peak_ID==424] <- 'Citrate'
+mri_limma_hmdb$Sig_Peaks <- ifelse(mri_limma_hmdb$P.Value<0.05, mri_limma_hmdb$Putative_Metabolite, '')
 
 ggplot(data=mri_limma_hmdb, aes(x=logFC, y=-log10(P.Value), 
                                 colour=Sig, 
@@ -167,8 +169,9 @@ ggplot(data=mri_limma_hmdb, aes(x=logFC, y=-log10(P.Value),
                   arrow = arrow(length = unit(0.0015, "npc"))) +  
   theme(legend.position = "none",
         plot.title = element_text(size = rel(1.5), hjust = 0.5),
-        axis.title = element_text(size = rel(1.25)))+
-  ylim(0,2)
+        axis.title = element_text(size = rel(1.25)))#+
+  
+#ylim(0,2)
 
 
 # Histogram of p-values 
@@ -180,7 +183,18 @@ mri_limma_hmdb%>%
   theme(legend.title = element_blank())+
   labs(x='p-value',
        y='Frequency')
-
+ab <- as.vector(mri_limma$adj.P.Val)
+write.table(ab,'qval.test.txt')
+library(qvalue)
+pi0 <- 2*mean(mri_limma$P.Value > 0.05)
+lfdrvals <- lfdr(mri_limma$P.Value, pi0)
+qobj <- qvalue(mri_limma$P.Value, fdr.level = 0.1, pi0.method='smoother')
+summary(qobj)
+hist(qobj)
+plot(qobj) #shows The estimated π0 versus the tuning parameter λ;
+#The q-values versus the p-values
+#The number of significant tests versus each q-value cut-off
+#The number of expected false positives versus the number of significant tests
 
 # PCA of samples
 scaled_intensities <- scale(t(mri_pre_limma_t))
@@ -268,7 +282,7 @@ imps_hmdb_id <- distinct(imps_hmdb_id, Putative_Metabolite, .keep_all = TRUE)
 imps_hmdb_id$Putative_Metabolite <- as.factor(imps_hmdb_id$Putative_Metabolite)
 
 write.csv(imps_hmdb_id, '20210114_AF_base_mri_syno_FI.csv')
-
+imps_hmdb_id <- read.csv('20210114_AF_base_mri_syno_FI.csv')
 # Plot the annotated peaks from feature importance
 ggplot(imps_hmdb_id)+
   geom_col(aes(reorder(Putative_Metabolite, Importance), 
@@ -283,7 +297,8 @@ ggplot(imps_hmdb_id)+
 
 ### Build linear models for the top peaks from feature selection for each of the disease measurements
 mri_melt$Peak_ID <- gsub('X','', mri_melt$Peak_ID)
-mri_melt_top <- subset(mri_melt, mri_melt$Peak_ID %in% imps_hmdb$Peak_ID)
+mri_melt_top <- mri_melt
+  #subset(mri_melt, mri_melt$Peak_ID %in% imps_hmdb$Peak_ID)
 
 ints_nested <- mri_melt_top %>%
   group_by (Peak_ID) %>%
@@ -331,6 +346,21 @@ sig_peaks <- distinct(sig_peaks, HMDB, .keep_all = TRUE)
 
 best_adj_hmdb <- subset(best_adj_hmdb,best_adj_hmdb$Peak_ID %in% sig_peaks$Peak_ID)
 
+syno_metabolites <- best_adj_hmdb
+colnames(syno_metabolites)[17] <-'Disease_Measure'
+syno_metabolites$Disease_Measure_Type <- 'MRI_Synovitis'
+mets_reduce <- function(disease_df){
+  disease_met <- disease_df[c(28:29)]
+  disease_met <- distinct(disease_met, Putative_Metabolite, .keep_all = TRUE)
+}
+
+mri_syno <- mets_reduce(syno_metabolites)
+
+metabolite_counts <- as.data.frame(as.matrix(table(mri_syno$Putative_Metabolite, mri_syno$Disease_Measure_Type)))
+names(metabolite_counts)<- c('Putative_Metabolite', 'Disease_Measure','Frequency')
+
+write.csv(mri_syno, '20210118_AF_base_mri_syno.csv')
+
 ggplot(best_adj_hmdb,aes(x = MRI_Synovitis, y=Peak_Intensity)) +
   geom_point() + 
   stat_cor(method = "pearson", 
@@ -368,6 +398,8 @@ stat_test%>%
   labs(x='p-value',
        y='Frequency')
 
+stat_syno <- read.csv('20210114_AF_base_mri_syno_stats.csv')
+
 stat_test_sig <- subset(stat_test, stat_test$p.adj < 0.05)
 mri_melt_top$Peak_ID <- as.numeric(mri_melt_top$Peak_ID)
 mri_melt_hmdb <- inner_join(mri_melt_top, peak_ID_HMDB, by='Peak_ID')
@@ -386,4 +418,112 @@ mri_melt_hmdb %>%
   stat_compare_means(aes(x=Syno_Response, y=Peak_Intensity),
                      method='wilcox')
   
+## Attempt to differentiate Mri synovitis responses using the selected metabolites at baseline
+mets <- c('Uric acid', "3-hydroxybutyrate", "L-Glutamate", "L-Tyrosine", "LysoPC", "Ribulose-5-phosphate")
+mri_limma_select <- subset(mri_limma_hmdb, mri_limma_hmdb$P.Value< 0.05)
+mri_limma_select <- subset(mri_limma_select, mri_limma_select$Putative_Metabolite != 'NA')
+  
+syno_mets <- mri_resp[,c(3,12:1470)]
+syno_mets$Syno_Response[syno_mets$ΔMRI_Synovitis < -6.5] <- 'Positive'
+syno_mets$Syno_Response[syno_mets$ΔMRI_Synovitis >= -6.5] <- 'Negative'
+syno_mets_2 <- syno_mets[,c(2:1460)]
+
+syno_mets_t <- syno_mets_2[,-1459]
+syno_mets_t <- as.data.frame(t(syno_mets_t))
+syno_mets_t$Peak_ID <- rownames(syno_mets_t)
+syno_mets_t$Peak_ID <- gsub('X', '', syno_mets_t$Peak_ID)
+syno_mets_t$Peak_ID <- as.numeric(syno_mets_t$Peak_ID)
+
+peaks_met <- subset(peak_ID_HMDB, peak_ID_HMDB$Putative_Metabolite %in% mets)
+
+syno_mets_select <- subset(syno_mets_t, syno_mets_t$Peak_ID %in% peaks_met$Peak_ID)
+syno_mets_select <- syno_mets_select[,-40]
+syno_sel <- as.data.frame(t(syno_mets_select))
+syno_sel$Response <- syno_mets$Syno_Response
+
+syno_melt <- melt(syno_sel)
+names(syno_melt) <- c('Response', 'Peak_ID', 'Peak_Intensity')
+
+
+stat_test <- syno_melt %>%
+  group_by(Peak_ID) %>%
+  rstatix::wilcox_test(Peak_Intensity ~ Response) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance()
+
+ggplot(syno_melt, aes(Response, Peak_Intensity,
+             fill=Response))+
+  theme_light()+
+  geom_violin()+
+  geom_jitter(size=0.5, alpha=0.5, colour='purple')+
+  geom_boxplot(width=0.1, color="grey", alpha=0.2) +
+  stat_compare_means(method= 'wilcox.test',
+                     label = "p.format",
+                     vjust=8, 
+                     hjust=-1)+
+  theme(legend.position = 'none')+
+  labs(y='Peak Intensity')+
+  ylim(15,23)
+
+
+#### Using logistic regression for prediction of patient outcomes. 
+mri_resping <- mri_pre_limma_2[,-1]
+syno_sel$Response[syno_sel$Response == 'Positive'] <- 1
+syno_sel$Response[syno_sel$Response == 'Negative'] <- 0
+syno_sel$Response <- as.numeric(syno_sel$Response)
+
+set.seed(42)
+index <- createDataPartition(syno_sel$Response, p = 0.7, list = FALSE)
+train_data <- syno_sel[index, ]
+test_data  <- syno_sel[-index, ]
+
+model <- glm(Response ~.,family=binomial(link='logit'),data=train_data)
+summary(model)
+anova(model, test="Chisq")
+
+#library(pscl)
+pR2(model)
+
+fitted.results <- predict(model,newdata=test_data,type='response')
+fitted.results <- ifelse(fitted.results > 0.4,1,0)
+misClasificError <- mean(fitted.results != test_data$Response)
+print(paste('Accuracy',1-misClasificError))
+
+#library(ROCR)
+p <- predict(model,newdata=test_data,type='response')
+pr <- prediction(p, test_data$Response)
+prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+plot(prf)
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]]
+auc
+
+# Repeat using fewer variables. Do this to avoid overfitting, selecting only the most significant
+model <- glm(Response ~ X74 + X162 + X196,family=binomial(link='logit'),data=train_data)
+summary(model)
+confint(model)
+anova(model, test="Chisq") # check the overall effect of the variables on the dependent variable
+pR2(model)
+fitted.results <- predict(model,newdata=test_data,type='response')
+fitted.results <- ifelse(fitted.results > 0.6,1,0)
+misClasificError <- mean(fitted.results != test_data$Response)
+print(paste('Accuracy',1-misClasificError))
+
+p <- predict(model,newdata=test_data,type='response')
+pr <- prediction(p, test_data$Response)
+prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+plot(prf)
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]]
+auc # higher the score, the better the model
+
+train_data %>%
+  mutate(prob = ifelse(Response == "1", 1, 0)) %>%
+  ggplot(aes(X196, prob)) +
+  geom_point(alpha = 0.2) +
+  geom_smooth(method = "glm", method.args = list(family = "binomial")) +
+  labs(title = "Logistic Regression Model", 
+    x = "Metabolite Abundance",
+    y = "Probability of Positive MRI Synovitis Response")+
+  theme_light()
 

@@ -283,14 +283,13 @@ ggplot(imps_hmdb_id)+
 
 ### Build linear models for the top peaks from feature selection for each of the disease measurements
 mri_melt$Peak_ID <- gsub('X','', mri_melt$Peak_ID)
-mri_melt_top <- subset(mri_melt, mri_melt$Peak_ID %in% imps_hmdb$Peak_ID)
 
-ints_nested <- mri_melt_top %>%
+ints_nested <- mri_melt %>%
   group_by (Peak_ID) %>%
   nest()
-ints_unnested <- mri_melt_top %>%
+ints_unnested <- mri_melt %>%
   unnest(cols=c())
-identical(mri_melt_top, ints_unnested)
+identical(mri_melt, ints_unnested)
 ints_lm <- ints_nested %>%
   mutate(model = map(data, ~lm(formula = Peak_Intensity~MRI_Oedema, data = .x)))
 model_coef_nested <- ints_lm %>%
@@ -342,7 +341,7 @@ ggplot(best_adj_hmdb,aes(x = MRI_Oedema, y=Peak_Intensity)) +
                                         size=1.5),
         strip.text.x= element_text(face = "bold.italic",
                                    size=12))+
-  labs(x='ΔMRI Synovitis',
+  labs(x='ΔMRI Oedema',
        y='Peak Intensity')+
   theme_minimal()
 

@@ -180,10 +180,11 @@ mri_limma%>%
   labs(x='p-value',
        y='Frequency')
 
-if (!requireNamespace("BiocManager", quietly = TRUE))
-  install.packages("BiocManager")
-
-BiocManager::install("qvalue")
+library(qvalue)
+pi0 <- 2*mean(mri_limma$P.Value > 0.05)
+lfdrvals <- lfdr(mri_limma$P.Value, pi0)
+qobj <- qvalue(mri_limma$P.Value)
+hist(qobj)
 
 # PCA of samples
 scaled_intensities <- scale(t(mri_pre_limma_t))
@@ -332,7 +333,11 @@ best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite != 'Cit
 sig_peaks <- distinct(best_adj_hmdb, Peak_ID, .keep_all = TRUE)
 sig_peaks <- sig_peaks[-4,]
 
-ggplot(best_adj_hmdb,aes(x = MRI_Synovitis, y=Peak_Intensity)) +
+mri_syn <-best_adj_hmdb 
+colnames(mri_syn)[17] <-'Disease_Measure'
+mri_syn$Disease_Measure_Type <- 'MRI_Synovitis'
+
+ggplot(best_adj_hmdb,aes(x = MRI_Erosion, y=Peak_Intensity)) +
   geom_point() + 
   stat_cor(method = "spearman", 
            vjust=1, hjust=0.1,
@@ -343,9 +348,21 @@ ggplot(best_adj_hmdb,aes(x = MRI_Synovitis, y=Peak_Intensity)) +
                                         size=1.5),
         strip.text.x= element_text(face = "bold.italic",
                                    size=12))+
-  labs(x='ΔMRI Synovitis',
+  labs(x='ΔMRI Erosion',
        y='ΔPeak Intensity')+
-  theme_minimal()
+  theme_minimal()+
+  xlim(-2,5)
+
+mets_reduce <- function(disease_df){
+  disease_met <- disease_df[c(28:29)]
+  disease_met <- distinct(disease_met, Putative_Metabolite, .keep_all = TRUE)
+}
+
+mri_syn_red <- mets_reduce(mri_syn)
+metabolite_counts_mri_syn <- as.data.frame(as.matrix(table(mri_syn_red$Putative_Metabolite, mri_syn_red$Disease_Measure_Type)))
+names(metabolite_counts_mri_syn)<- c('Putative_Metabolite', 'Disease_Measure','Frequency')
+
+write.csv(mri_syn_red, '20210118_AF_diff_mri_syno_mets_count.csv')
 
 
 ### Directly investigating differential abundance of metabolites of interest
@@ -369,3 +386,77 @@ stat_test%>%
   theme(legend.title = element_blank())+
   labs(x='p-value',
        y='Frequency')
+
+
+#### Using logistic regression for prediction of patient outcomes. 
+resp_int_lr <- mri_pre_limma_2
+
+das_peaks <- c("DG", "Hypoxanthine", "Indoleacrylic acid", "L-Glutamate", "Traumatic acid",
+               "Uric acid")
+
+peaks_das <- subset(peak_ID_HMDB, peak_ID_HMDB$Putative_Metabolite %in% das_peaks)
+
+resp_lr <- resp_int_lr[,-1]
+resp_lr_t <- as.data.frame(t(resp_lr))
+resp_lr_t$Peak_ID <- rownames(resp_lr_t)
+resp_lr_t$Peak_ID <- gsub('X', '', resp_lr_t$Peak_ID)
+resp_lr_t$Peak_ID  <- as.numeric(resp_lr_t$Peak_ID )
+resp_lr_sel <- subset(resp_lr_t, resp_lr_t$Peak_ID %in% peaks_das$Peak_ID)
+resp_lr_sel_t <- resp_lr_sel[,-40]
+resp_lr_sel_t <- as.data.frame(t(resp_lr_sel_t))
+resp_lr_mets<- resp_lr_sel_t
+resp_lr_mets$Response <- resp_int_lr$Syno_Response
+resp_lr_mets <- resp_lr_mets[,c(ncol(resp_lr_mets),1:(ncol(resp_lr_mets)-1))]
+
+resp_lr_mets$Response <- as.character(resp_lr_mets$Response)
+resp_lr_mets$Response[resp_lr_mets$Response=='Positive'] <- 1
+resp_lr_mets$Response[resp_lr_mets$Response=='Negative'] <- 0
+resp_lr_mets$Response <- as.numeric(resp_lr_mets$Response)
+names(resp_lr_mets)[2:9] <- paste0('X', names(resp_lr_mets)[2:9])
+
+set.seed(42)
+index <- createDataPartition(resp_lr_mets$Response, p = 0.9, list = FALSE) # 0.8
+train_data <- resp_lr_mets[index, ]
+test_data  <- resp_lr_mets[-index, ]
+
+model <- glm(Response ~.,family=binomial(link='logit'),data=train_data)
+summary(model)
+anova(model, test="Chisq")
+
+#library(pscl)
+pR2(model)
+
+fitted.results <- predict(model,newdata=test_data,type='response')
+fitted.results <- ifelse(fitted.results > 0.5,1,0)
+misClasificError <- mean(fitted.results != test_data$Response)
+print(paste('Accuracy',1-misClasificError))
+
+#library(ROCR)
+p <- predict(model,newdata=test_data,type='response')
+pr <- prediction(p, test_data$Response)
+prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+plot(prf)
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]]
+auc
+
+# Repeat using fewer variables. Do this to avoid overfitting, selecting only the most significant
+model <- glm(Response ~ X270 + X711 +X738 ,family=binomial(link='logit'),data=train_data)
+summary(model)
+confint(model)
+anova(model, test="Chisq") # check the overall effect of the variables on the dependent variable
+pR2(model)
+fitted.results <- predict(model,newdata=test_data,type='response')
+fitted.results <- ifelse(fitted.results > 0.5,1,0)
+misClasificError <- mean(fitted.results != test_data$Response)
+print(paste('Accuracy',1-misClasificError))
+
+p <- predict(model,newdata=test_data,type='response')
+pr <- prediction(p, test_data$Response)
+prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+plot(prf)
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]]
+auc # higher the score, the better the model
+
+

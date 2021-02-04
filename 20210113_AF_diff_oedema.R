@@ -330,7 +330,11 @@ sig_peaks <- sig_peaks[-1,]
 
 best_adj_hmdb <- subset(best_adj_hmdb,best_adj_hmdb$Peak_ID %in% sig_peaks$Peak_ID)
 
-ggplot(best_adj_hmdb,aes(x = MRI_Oedema, y=Peak_Intensity)) +
+mri_oed <-best_adj_hmdb 
+colnames(mri_oed)[17] <-'Disease_Measure'
+mri_oed$Disease_Measure_Type <- 'MRI_Oedema'
+
+ggplot(best_adj_hmdb,aes(x = MRI_Erosion, y=Peak_Intensity)) +
   geom_point() + 
   stat_cor(method = "spearman", 
            vjust=1, hjust=0.1,
@@ -341,11 +345,21 @@ ggplot(best_adj_hmdb,aes(x = MRI_Oedema, y=Peak_Intensity)) +
                                         size=1.5),
         strip.text.x= element_text(face = "bold.italic",
                                    size=12))+
-  labs(x='ΔMRI Oedema',
+  labs(x='ΔMRI Erosion',
        y='ΔPeak Intensity')+
-  theme_minimal()
+  theme_minimal()+
+  xlim(-2,5)
 
+mets_reduce <- function(disease_df){
+  disease_met <- disease_df[c(28:29)]
+  disease_met <- distinct(disease_met, Putative_Metabolite, .keep_all = TRUE)
+}
 
+mri_oed_red <- mets_reduce(mri_oed)
+metabolite_counts_mri_oed <- as.data.frame(as.matrix(table(mri_oed_red$Putative_Metabolite, mri_oed_red$Disease_Measure_Type)))
+names(metabolite_counts_mri_oed)<- c('Putative_Metabolite', 'Disease_Measure','Frequency')
+
+write.csv(mri_oed_red, '20210118_AF_diff_mri_oed_mets_count.csv')
 ### Directly investigating differential abundance of metabolites of interest
 mri_melt_top$Oedema_Response <- 0
 mri_melt_top$Oedema_Response[mri_melt_top$MRI_Oedema >=-2] <- 'Negative'

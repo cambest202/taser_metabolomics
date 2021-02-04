@@ -332,6 +332,10 @@ best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite != 'Cit
 sig_peaks <- distinct(best_adj_hmdb, Peak_ID, .keep_all = TRUE)
 sig_peaks <- sig_peaks[-4,]
 
+mri_er <-best_adj_hmdb 
+colnames(mri_er)[17] <-'Disease_Measure'
+mri_er$Disease_Measure_Type <- 'MRI_Erosion'
+
 ggplot(best_adj_hmdb,aes(x = MRI_Erosion, y=Peak_Intensity)) +
   geom_point() + 
   stat_cor(method = "spearman", 
@@ -347,6 +351,17 @@ ggplot(best_adj_hmdb,aes(x = MRI_Erosion, y=Peak_Intensity)) +
        y='ΔPeak Intensity')+
   theme_minimal()+
   xlim(-2,5)
+
+mets_reduce <- function(disease_df){
+  disease_met <- disease_df[c(28:29)]
+  disease_met <- distinct(disease_met, Putative_Metabolite, .keep_all = TRUE)
+}
+
+mri_eros_red <- mets_reduce(mri_er)
+metabolite_counts_mri_ero <- as.data.frame(as.matrix(table(mri_eros_red$Putative_Metabolite, mri_eros_red$Disease_Measure_Type)))
+names(metabolite_counts_mri_ero)<- c('Putative_Metabolite', 'Disease_Measure','Frequency')
+
+write.csv(mri_eros_red, '20210118_AF_diff_mri_ero_mets_count.csv')
 
 ### Directly investigating differential abundance of metabolites of interest
 mri_melt_top$MRI_Response <- 0

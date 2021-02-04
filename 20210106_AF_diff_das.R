@@ -23,10 +23,6 @@ theme_fish <- function () {
     )
 }
 
-remotes::install_github("csdaw/ggprism")
-library(ggprism)
-
-
 ###libraries------
 library(ggplot2)
 library(tidyverse) 
@@ -45,7 +41,8 @@ library(ggrepel)
 library(amap)
 library(rstatix)
 library(broom)
-
+library(ggprism)
+library(HDDesign)
 library(caret)
 library(rsample)
 library(sandwich)
@@ -59,7 +56,6 @@ library(devtools)
 library(e1071)
 library(ggraph)
 library(igraph)
-
 
 setwd('/Users/cameronbest/University/MRC_DTP_in_Precision_Medicine/Project/RA/Taser_data/Analysis/taser_metabolomics')
 
@@ -142,7 +138,7 @@ limma_fun <- function(matrix_AB, no., var1, var2){
 
 AF_limma <- limma_fun(resp_differential_t, 1500, 'A', 'F')
 AF_limma$Sig <- 0
-AF_limma$Sig <- ifelse(AF_limma$adj.P.Val <0.05, 1, 0) 
+AF_limma$Sig <- ifelse(AF_limma$adj.P.Val <0.05, 'Significant', 'Not significant') 
 AF_limma$Sig_Peaks <- ifelse(AF_limma$adj.P.Val<0.001 & AF_limma$identification != '', AF_limma$Peak_ID, '')
 
 AF_limma_hmdb <- inner_join(AF_limma, peak_ID_HMDB, by='Peak_ID')
@@ -150,32 +146,52 @@ AF_limma_hmdb$Sig_Peaks <- ifelse(AF_limma_hmdb$adj.P.Val<0.05, AF_limma_hmdb$Pu
 
 AF_limma_hmdb_dist <- distinct(AF_limma_hmdb, Putative_Metabolite, .keep_all = TRUE)
 
+AF_limma_hmdb_dist$Sig <- as.factor(AF_limma_hmdb_dist$Sig)
+
 ggplot(data=AF_limma_hmdb_dist, aes(x=logFC, y=-log10(P.Value), 
                           colour=Sig, 
                           group=Sig)) +
   geom_point (alpha=0.7) +
   theme_minimal() +
   labs (x='LogFC',
-        y='-Log p-value') +
-  geom_label_repel(aes(x = logFC, y = -log10(P.Value), label = Sig_Peaks),
+        y='-Log p-value',
+        colour='Signficance')+
+  geom_text_repel(aes(x = logFC, y = -log10(P.Value), label = Sig_Peaks),
                    box.padding =1,
                    max.overlaps = Inf,
                    position = position_jitter(seed = 1),
                    arrow = arrow(length = unit(0.0015, "npc"))) +  
-  theme(legend.position = "none",
-        plot.title = element_text(size = rel(1.5), hjust = 0.5),
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
         axis.title = element_text(size = rel(1.25)))+
-  ylim(0,30)
+  scale_color_brewer(palette = "Set1")+
+  ylim(0,17)+
+  xlim(-2,5)
 
 # Histogram of p-values 
+alpha <- binw <- 0.05 #where α = 0.05
+pi0 <- 2*mean(AF_limma$P.Value > 0.05)
+sample_size <- nrow(resp_differential_t)
 AF_limma%>%
   mutate(Colour = ifelse(adj.P.Val < 0.05, "adj.P.Val < 0.05", "adj.P.Val > 0.05")) %>%
   ggplot(aes(P.Value))+
-  geom_histogram(aes(fill=Colour),binwidth=0.02, colour='black')+
+  geom_histogram(aes(fill=Colour),binwidth=binw, boundary=0, colour='black')+
   theme_pubclean()+
   theme(legend.title = element_blank())+
+  geom_hline(yintercept = pi0 * binw * sample_size, col='blue')+
+  geom_vline(xintercept=alpha, col='red')+
   labs(x='p-value',
        y='Frequency')
+
+yintercept <- pi0 * binw * sample_size
+count(AF_limma$P.Value < 0.025)
+FDR_fraction <- pi0 * alpha/mean(AF_limma$P.Value <= alpha)
+
+# Adding local FDR, qvalue and π0 values to p-value histogram
+library(qvalue)
+pi0 <- 2*mean(AF_limma$P.Value > 0.05)
+lfdrvals <- lfdr(AF_limma$P.Value, pi0)
+qobj <- qvalue(AF_limma$P.Value)
+hist(qobj)
 
 # PCA of samples
 scaled_intensities <- scale(t(resp_differential_t))
@@ -250,12 +266,14 @@ customRF$prob <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
 customRF$sort <- function(x) x[order(x[,1]),]
 customRF$levels <- function(x) x$classes
 
+library(parallel)
+library(doParallel)
 cores <- makeCluster(detectCores()-1)
 registerDoParallel(cores = cores)
 # train model
 control <- trainControl(method="repeatedcv", 
                         number=10, 
-                        repeats=3,
+                        repeats=5,
                         allowParallel = TRUE)
 
 tunegrid <- expand.grid(.mtry=c(1:sqrt(1458)),.ntree=c(300,500,700))
@@ -308,6 +326,7 @@ imps_hmdb_id$Putative_Metabolite <- as.factor(imps_hmdb_id$Putative_Metabolite)
 write.csv(imps_hmdb_id, '20210111_AF_diff_das_FI_metabolites.csv')
 
 # Plot the annotated peaks from feature importance
+imps_hmdb_id <- read.csv('20210111_AF_diff_das_FI_metabolites.csv')
 ggplot(imps_hmdb_id)+
   geom_col(aes(reorder(Putative_Metabolite, Importance), 
                Importance),
@@ -317,6 +336,7 @@ ggplot(imps_hmdb_id)+
   theme_minimal()+
   labs(y='Relative Importance',
        x='Putative Metabolite')+
+  scale_colour_brewer(palette = "Set1")+
   theme(axis.text.y = element_text(size = 8))
 
 ### Build linear models for the top peaks from feature selection for each of the disease measurements
@@ -377,6 +397,7 @@ ggplot(best_adj_hmdb,aes(x = DAS44, y=Peak_Intensity)) +
                                         size=1.5),
         strip.text.x= element_text(face = "bold.italic",
                                    size=12))+
+  
   labs(x='ΔDAS44',
        y='ΔPeak Intensity')+
   theme_minimal()
@@ -702,6 +723,8 @@ shared_mets_reduced <- rbind.data.frame(DAS_met,
 metabolite_counts <- as.data.frame(as.matrix(table(shared_mets_reduced$Putative_Metabolite, shared_mets_reduced$Disease_Measure_Type)))
 names(metabolite_counts)<- c('Putative_Metabolite', 'Disease_Measure','Frequency')
 
+write.csv(shared_mets_reduced, '20210118_AF_diff_das_mets_count.csv')
+shared_mets_reduced <- read.csv('20210118_AF_diff_das_mets_count.csv')
 metabolite_counts%>%
   ggplot()+
   geom_col(aes(reorder(Putative_Metabolite, Frequency),
@@ -921,7 +944,7 @@ update_kegg_shared <- fi_cor_kegg
 update_kegg_shared$kegg[update_kegg_shared$kegg ==''] <- NA
 update_kegg_list <- update_kegg_shared$kegg
 #write.csv(update_kegg_shared,'20210108_AF_diff_das_kegg_list.csv')
-
+ab <- read.csv('20210108_AF_diff_das_kegg_list.csv')
 analysis_update <- enrich(
   compounds = update_kegg_list,
   data = fella.data,
@@ -1030,18 +1053,18 @@ g_go <- addGOToGraph(graph=g_update,
                      mart.options = list(biomart = "ensembl", dataset = "hsapiens_gene_ensembl"))
 
 set.seed(42)
-plot_graph(g_update)
+plot_graph(g)
 
 tab.all <- generateResultsTable(
   method='diffusion',
   nlimit=100,
-  object=analysis_update,
+  object=analysis,
   data=fella.data)
 
 tab.enzyme <- generateEnzymesTable(
   method='diffusion',
   nlimit=100,
-  object=analysis_update,
+  object=analysis,
   data=fella.data)
 
 ### Directly investigating differential abundance of metabolites of interest
@@ -1072,8 +1095,8 @@ resp_ints_stats_dist_F <- subset(resp_ints_stats_hmdb_id, resp_ints_stats_hmdb_i
 
 resp_ints_stats_hmdb_comb <- rbind.data.frame(resp_ints_stats_dist_A ,resp_ints_stats_dist_F)
 
-#write.csv(resp_ints_stats_hmdb, '20210111_AF_diff_das.csv')
-
+write.csv(resp_ints_stats_hmdb, '20210111_AF_diff_das.csv')
+resp_ints_stats_hmdb <- read.csv('20210111_AF_diff_das.csv')
 resp_ints_stats_hmdb_comb$Sample <- as.factor(resp_ints_stats_hmdb_comb$Sample)
 resp_ints_stats_hmdb_comb$Peak_Intensity <- as.numeric(resp_ints_stats_hmdb_comb$Peak_Intensity)
 resp_ints_stats_hmdb_comb$p.adj <- signif(resp_ints_stats_hmdb_comb$p.adj,3)
@@ -1100,7 +1123,310 @@ diff_analysis <- function(peak_ID, position){
     labs(y='Peak Intensity')
 }
 
-diff_analysis(582, 25.2)
+  diff_analysis(169, 25.2)
 
   
+
+### Dealing with poor quality peaks
+poor_peaks <- as.numeric(c(85, 642, 925))
+
+AF_limma_hmdb_clean <- AF_limma_hmdb[-c(1,4,9),]
+  
+AF_limma_hmdb_clean%>%
+  ggplot(aes(x=logFC, y=-log10(P.Value), 
+                                      colour=Sig, 
+                                      group=Sig)) +
+  geom_point (alpha=0.7) +
+  theme_minimal() +
+  labs (x='LogFC',
+        y='-Log p-value',
+        colour='Signficance',
+        title='Differential Putative Metabolites \nBetween Baseline and 18-Months Post Treatment Initiation') +
+  geom_text_repel(aes(x = logFC, y = -log10(P.Value), label = Sig_Peaks),
+                  box.padding =1,
+                  max.overlaps = Inf,
+                  position = position_jitter(seed = 1),
+                  arrow = arrow(length = unit(0.0015, "npc"))) +  
+  theme(axis.text = element_text(size = 12, hjust = 0.5),
+        axis.title = element_text(size = 12),
+        legend.title=element_text(size=12),
+        legend.text=element_text(size=12))+
+  scale_color_brewer(palette = "Set1")+
+  xlim(-2,5)+
+  ylim(0,25)
+
+# Histogram of p-values 
+AF_limma_hmdb_clean%>%
+  mutate(Colour = ifelse(adj.P.Val < 0.05, "adj.P.Val < 0.05", "adj.P.Val > 0.05")) %>%
+  ggplot(aes(P.Value))+
+  geom_histogram(aes(fill=Colour),binwidth=0.02, colour='black')+
+  theme_pubclean()+
+  theme(legend.title = element_blank())+
+  scale_fill_brewer(palette = "Set1")+
+  labs(x='p-value',
+       y='Frequency')
+
+
+diff_das_peaks <- subset(AF_limma_hmdb_clean, AF_limma_hmdb_clean$adj.P.Val < 0.05 & AF_limma_hmdb_clean$Putative_Metabolite != 'NA')
+diff_das_peaks_sim <- diff_das_peaks[,c(1,4,15)]
+
+### Plotting the patient groups into response groups based on potential biomarkers------
+# Looking at the changing metabolites and their involvement in responses??
+# First plot boxplots side by side to show the change in the mean peak intensity across response groups
+kegg_list <- read.csv('metabolite.list.csv', header=TRUE)
+peak_ID_HMDB_select <- subset(peak_ID_HMDB, peak_ID_HMDB$Putative_Metabolite %in% kegg_list$x)
+
+resp_diff_box <- resp_diff_2[,-1]
+resp_diff_box_t <- as.data.frame(t(resp_diff_box))
+resp_diff_box_t$Peak_ID <- rownames(resp_diff_box_t)
+resp_diff_box_t <- resp_diff_box_t[,c(ncol(resp_diff_box_t),1:(ncol(resp_diff_box_t)-1))]
+resp_diff_box_t$Peak_ID <- gsub('X','', resp_diff_box_t$Peak_ID)
+resp_diff_box_t$Peak_ID <- as.numeric(resp_diff_box_t$Peak_ID)
+
+resp_diff_selects <- subset(resp_diff_box_t, resp_diff_box_t$Peak_ID %in% peak_ID_HMDB_select$Peak_ID)
+resp_diff_selects_t <- resp_diff_selects[,-1]
+resp_diff_selects_t <- as.data.frame(t(resp_diff_selects_t))
+resp_diff_selects_t$DAS44 <- resp_diff$DAS44_Response
+resp_diff_selects_t$DAS44[resp_diff_selects_t$DAS44 == 'Good' | resp_diff_selects_t$DAS44 == 'Remission']<- 'Positive'
+resp_diff_selects_t$DAS44[resp_diff_selects_t$DAS44 == 'Poor' | resp_diff_selects_t$DAS44 == 'Mild']<- 'Negative'
+
+resp_diff_selects_t$Sample <- rownames(resp_diff_selects_t)
+resp_melt <- melt(resp_diff_selects_t)
+names(resp_melt)[3:4] <- c('Peak_ID', 'Peak_Intensity')
+
+stat_test <- resp_melt %>%
+  group_by(Peak_ID) %>%
+  rstatix::wilcox_test(Peak_Intensity ~ DAS44) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance()
+
+# Plot showing the mean Δpeak intensities across the selected peaks in positive and negative responders
+ggplot(resp_melt,aes(x=DAS44, y=Peak_Intensity))+
+  geom_violin(aes(fill=DAS44))+
+  geom_boxplot(width=0.1, color="grey", alpha=0.2) +
+  theme_minimal()+
+  stat_compare_means(method= 'wilcox.test',
+                     label = "p.format",
+                     vjust=1, 
+                     hjust=-1)+
+  theme(legend.position= 'none')+
+  labs(x='DAS44 Response',
+       y='ΔPeak Intensity')
+
+### Attempt above with the baseline levels against the differential response-----
+### Directly investigating differential abundance of metabolites of interest
+resp_ints_melt <- resp_ints[c(8:1466)]
+resp_ints_melt <- melt(resp_ints_melt)
+names(resp_ints_melt) <- c('Response','Peak_ID','Peak_Intensity')
+resp_ints_melt$Peak_ID <- gsub('X', '', resp_ints_melt$Peak_ID)
+
+resp_ints_melt_select <- subset(resp_ints_melt, resp_ints_melt$Peak_ID %in% peak_ID_HMDB_select$Peak_ID)
+
+stat_test <- resp_ints_melt_select %>%
+  group_by(Peak_ID) %>%
+  rstatix::wilcox_test(Peak_Intensity ~ Response) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance()
+
+resp_ints_stats <- inner_join(resp_ints_melt_select, stat_test, by='Peak_ID')
+resp_ints_stats$Peak_ID_2 <- resp_ints_stats$Peak_ID
+resp_ints_stats$Peak_ID <- gsub('X', '', resp_ints_stats$Peak_ID)
+resp_ints_stats$Peak_ID <- as.numeric(resp_ints_stats$Peak_ID)
+
+resp_ints_stats_hmdb <- inner_join(resp_ints_stats, peak_ID_HMDB, by='Peak_ID')
+resp_ints_stats_hmdb_id <- subset(resp_ints_stats_hmdb, resp_ints_stats_hmdb$Putative_Metabolite !='NA')  
+
+resp_ints_stats_dist_pos <- subset(resp_ints_stats_hmdb_id, resp_ints_stats_hmdb_id$Response == 'Positive')  %>%
+  distinct(Peak_ID, .keep_all = TRUE)
+
+resp_ints_stats_dist_neg <- subset(resp_ints_stats_hmdb_id, resp_ints_stats_hmdb_id$Response == 'Negative')  %>%
+  distinct(Peak_ID, .keep_all = TRUE)
+
+resp_ints_stats_hmdb_comb <- rbind.data.frame(resp_ints_stats_dist_pos ,resp_ints_stats_dist_neg)
+resp_ints_stats_hmdb_comb$Response <- as.factor(resp_ints_stats_hmdb_comb$Response)
+resp_ints_stats_hmdb_comb$Peak_Intensity <- as.numeric(resp_ints_stats_hmdb_comb$Peak_Intensity)
+resp_ints_stats_hmdb_comb$p.adj <- signif(resp_ints_stats_hmdb_comb$p.adj,3)
+
+resp_ints_stats_hmdb_comb %>%
+  ggplot(aes(Response, Peak_Intensity,
+             fill=Response))+
+  theme_light()+
+  geom_violin()+
+  geom_boxplot(width=0.1, color="grey", alpha=0.2) +
+  stat_compare_means(method= 't.test',
+                     label = "p.format",
+                     vjust=1, 
+                     hjust=-1)+
+  theme(legend.position = 'none')+
+  labs(y='Peak Intensity')
+
+# Keep directional metabolites, based on fold change from the AF_limma -----
+AF_limma_pos <- subset(AF_limma, AF_limma$logFC >0)
+AF_limma_neg <- subset(AF_limma, AF_limma$logFC <0)
+peak_ID_HMDB_select_pos <-subset(peak_ID_HMDB_select, peak_ID_HMDB_select$Peak_ID %in% AF_limma_pos$Peak_ID)
+peak_ID_HMDB_select_neg <-subset(peak_ID_HMDB_select, peak_ID_HMDB_select$Peak_ID %in% AF_limma_neg$Peak_ID)
+
+resp_ints_melt_select <- subset(resp_ints_melt, resp_ints_melt$Peak_ID %in% peak_ID_HMDB_select_pos$Peak_ID)
+
+stat_test <- resp_ints_melt_select %>%
+  group_by(Peak_ID) %>%
+  rstatix::wilcox_test(Peak_Intensity ~ Response) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance()
+
+resp_ints_stats <- inner_join(resp_ints_melt_select, stat_test, by='Peak_ID')
+resp_ints_stats$Peak_ID_2 <- resp_ints_stats$Peak_ID
+resp_ints_stats$Peak_ID <- gsub('X', '', resp_ints_stats$Peak_ID)
+resp_ints_stats$Peak_ID <- as.numeric(resp_ints_stats$Peak_ID)
+
+resp_ints_stats_hmdb <- inner_join(resp_ints_stats, peak_ID_HMDB, by='Peak_ID')
+resp_ints_stats_hmdb_id <- subset(resp_ints_stats_hmdb, resp_ints_stats_hmdb$Putative_Metabolite !='NA')  
+
+resp_ints_stats_dist_pos <- subset(resp_ints_stats_hmdb_id, resp_ints_stats_hmdb_id$Response == 'Positive')  %>%
+  distinct(Peak_ID, .keep_all = TRUE)
+
+resp_ints_stats_dist_neg <- subset(resp_ints_stats_hmdb_id, resp_ints_stats_hmdb_id$Response == 'Negative')  %>%
+  distinct(Peak_ID, .keep_all = TRUE)
+
+resp_ints_stats_hmdb_comb <- rbind.data.frame(resp_ints_stats_dist_pos ,resp_ints_stats_dist_neg)
+resp_ints_stats_hmdb_comb$Response <- as.factor(resp_ints_stats_hmdb_comb$Response)
+resp_ints_stats_hmdb_comb$Peak_Intensity <- as.numeric(resp_ints_stats_hmdb_comb$Peak_Intensity)
+resp_ints_stats_hmdb_comb$p.adj <- signif(resp_ints_stats_hmdb_comb$p.adj,3)
+
+resp_ints_stats_hmdb_comb %>%
+  ggplot(aes(Response, Peak_Intensity,
+             fill=Response))+
+  theme_light()+
+  geom_violin()+
+  geom_boxplot(width=0.1, color="grey", alpha=0.2) +
+  stat_compare_means(method= 'wilcox.test',
+                     label = "p.format",
+                     vjust=1, 
+                     hjust=-1)+
+  theme(legend.position = 'none')+
+  labs(y='Peak Intensity')  
+  
+## Looking at the change in peak intensity of selected peaks for their change from A to F ------
+### Attempt above with the baseline levels against the differential response
+### Directly investigating differential abundance of metabolites of interest
+resp_ints_melt <- resp_ints[c(3,9:1466)]
+resp_ints_melt <- melt(resp_ints_melt)
+names(resp_ints_melt) <- c('Sample','Peak_ID','Peak_Intensity')
+resp_ints_melt$Peak_ID <- gsub('X', '', resp_ints_melt$Peak_ID)
+
+resp_ints_melt_select <- subset(resp_ints_melt, resp_ints_melt$Peak_ID %in% peak_ID_HMDB_select$Peak_ID)
+
+stat_test <- resp_ints_melt_select %>%
+  group_by(Peak_ID) %>%
+  rstatix::wilcox_test(Peak_Intensity ~ Sample) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance()
+
+resp_ints_stats <- inner_join(resp_ints_melt_select, stat_test, by='Peak_ID')
+resp_ints_stats$Peak_ID_2 <- resp_ints_stats$Peak_ID
+resp_ints_stats$Peak_ID <- gsub('X', '', resp_ints_stats$Peak_ID)
+resp_ints_stats$Peak_ID <- as.numeric(resp_ints_stats$Peak_ID)
+
+resp_ints_stats_hmdb <- inner_join(resp_ints_stats, peak_ID_HMDB, by='Peak_ID')
+resp_ints_stats_hmdb_id <- subset(resp_ints_stats_hmdb, resp_ints_stats_hmdb$Putative_Metabolite !='NA')  
+
+resp_ints_stats_dist_A <- subset(resp_ints_stats_hmdb_id, resp_ints_stats_hmdb_id$Sample == 'A')  %>%
+  distinct(Peak_ID, .keep_all = TRUE)
+
+resp_ints_stats_dist_ <- subset(resp_ints_stats_hmdb_id, resp_ints_stats_hmdb_id$Sample == 'F')  %>%
+  distinct(Peak_ID, .keep_all = TRUE)
+
+resp_ints_stats_hmdb_comb <- rbind.data.frame(resp_ints_stats_dist_A ,resp_ints_stats_dist_F)
+resp_ints_stats_hmdb_comb$Sample <- as.factor(resp_ints_stats_hmdb_comb$Sample)
+resp_ints_stats_hmdb_comb$Peak_Intensity <- as.numeric(resp_ints_stats_hmdb_comb$Peak_Intensity)
+resp_ints_stats_hmdb_comb$p.adj <- signif(resp_ints_stats_hmdb_comb$p.adj,3)
+resp_ints_stats_hmdb_padj <- subset(resp_ints_stats_hmdb_comb, resp_ints_stats_hmdb_comb$p.adj < 1e-3)
+
+resp_ints_stats_hmdb_padj %>%
+  ggplot(aes(Sample, Peak_Intensity,
+             fill=Sample))+
+  theme_light()+
+  geom_violin()+
+  geom_boxplot(width=0.1, color="grey", alpha=0.2) +
+  stat_compare_means(method= 'wilcox.test',
+                     label = "p.format",
+                     vjust=1, 
+                     hjust=-1)+
+  theme(legend.position = 'none')+
+  labs(y='Peak Intensity')
+
+#### Using logistic regression for prediction of patient outcomes. 
+resp_int_lr <- resp_diff_ML_2
+
+das_peaks <- c("L-Glutamate", "Hypoxanthine", "L-Valine", "Uridine", "L-Ornithine",
+               "Creatinine", "Orotate" ,  "N-Acetylornithine")
+das_strict <- c("L-Glutamate", "Hypoxanthine", "L-Histidine", "L-Valine", "Traumatic acid", 'Orotate', "N-Acetylornithine")
+
+peaks_das <- subset(peak_ID_HMDB, peak_ID_HMDB$Putative_Metabolite %in% das_strict)
+
+AF_refined <- subset(AF_limma_hmdb, AF_limma_hmdb$adj.P.Val < 0.01)
+AF_refined <- subset(AF_refined, AF_refined$Putative_Metabolite != 'NA')
+AF_refined <- distinct(AF_refined, Putative_Metabolite, .keep_all = TRUE)
+
+resp_lr <- resp_int_lr[,-1]
+resp_lr_t <- as.data.frame(t(resp_lr))
+resp_lr_t$Peak_ID <- rownames(resp_lr_t)
+resp_lr_sel <- subset(resp_lr_t, resp_lr_t$Peak_ID %in% peaks_das$Peak_ID)
+resp_lr_sel_t <- resp_lr_sel[,-64]
+resp_lr_sel_t <- as.data.frame(t(resp_lr_sel_t))
+resp_lr_mets<- resp_lr_sel_t
+resp_lr_mets$Response <- resp_int_lr$DAS44_Response
+resp_lr_mets <- resp_lr_mets[,c(ncol(resp_lr_mets),1:(ncol(resp_lr_mets)-1))]
+
+resp_lr_mets$Response <- as.character(resp_lr_mets$Response)
+resp_lr_mets$Response[resp_lr_mets$Response=='Positive'] <- 1
+resp_lr_mets$Response[resp_lr_mets$Response=='Negative'] <- 0
+resp_lr_mets$Response <- as.numeric(resp_lr_mets$Response)
+names(resp_lr_mets)[2:13] <- paste0('X', names(resp_lr_mets)[2:13])
+
+set.seed(42)
+index <- createDataPartition(resp_lr_mets$Response, p = 0.8, list = FALSE) # 0.8
+train_data <- resp_lr_mets[index, ]
+test_data  <- resp_lr_mets[-index, ]
+
+model <- glm(Response ~.,family=binomial(link='logit'),data=train_data)
+summary(model)
+anova(model, test="Chisq")
+
+#library(pscl)
+pR2(model)
+
+fitted.results <- predict(model,newdata=test_data,type='response')
+fitted.results <- ifelse(fitted.results > 0.5,1,0)
+misClasificError <- mean(fitted.results != test_data$Response)
+print(paste('Accuracy',1-misClasificError))
+
+#library(ROCR) 
+p <- predict(model,newdata=test_data,type='response')
+pr <- prediction(p, test_data$Response)
+prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+plot(prf)
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]]
+auc
+
+# Repeat using fewer variables. Do this to avoid overfitting, selecting only the most significant
+model <- glm(Response ~ X270 + X711 +X738 ,family=binomial(link='logit'),data=train_data)
+summary(model)
+confint(model)
+anova(model, test="Chisq") # check the overall effect of the variables on the dependent variable
+pR2(model)
+fitted.results <- predict(model,newdata=test_data,type='response')
+fitted.results <- ifelse(fitted.results > 0.5,1,0)
+misClasificError <- mean(fitted.results != test_data$Response)
+print(paste('Accuracy',1-misClasificError))
+
+p <- predict(model,newdata=test_data,type='response')
+pr <- prediction(p, test_data$Response)
+prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+plot(prf)
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]]
+auc # higher the score, the better the model
+
 

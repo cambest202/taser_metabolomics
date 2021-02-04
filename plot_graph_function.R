@@ -94,17 +94,18 @@ plot_graph <- function(
   if (NamesAsLabels) {
     vertex.label <- V(graph)$label
   } else {
-    vertex.label <- V(graph)$name
+    vertex.label <- 'none'
   }
   
   options <- as.list(substitute(list(...)))[-1L]
   args.shared <- list(
     layout = graph.layout, 
-    vertex.size = 5, 
+    vertex.size = 8, 
     vertex.label = vertex.label, 
     vertex.label.dist = vertex.label.dist, 
     vertex.label.color = "black", 
     vertex.label.degree = vertex.label.degree, 
+    vertex.label.cex = 2,
     vertex.frame.color = vertex.frame.color, 
     vertex.color = vertex.color, 
     vertex.shape = vertex.shape,

@@ -343,3 +343,4 @@ ggplot(best_hmdb,aes(x = XRay_Sharp, y=Peak_Intensity)) +
        y='ΔPeak Intensity')+
   theme_minimal()
 
+xray_mets <- best_hmdb
