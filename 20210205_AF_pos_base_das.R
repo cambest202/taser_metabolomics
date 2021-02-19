@@ -47,19 +47,36 @@ resp_ints <- read.csv('20210204_AF_resp_int_pos.csv', header=TRUE)
 resp_diff <- read.csv('20210204_AF_resp_diff_pos.csv', header=TRUE)
 #peak_IDs <- read.table (file="20200117_Taser_PeakIDs.csv", header=TRUE, row.names=1, sep= "\t")
 #peak_ID_HMDB <- read.csv(file='peak_IDs_HMDB.csv', header=TRUE, row.names=1)
-peak_metadata <- read.csv(file='20200521_Taser_POS_Peakdata.csv', header=TRUE, row.names=1)
+peak_metadata <- read.csv(file='20200521_Taser_POS_Peakdata.csv', header=TRUE)
 
 sample_sheet = read.table (file="20200318_Taser_SampleSheet.csv", header=TRUE, row.names=1)
 patient_metadata <- read.csv(file='20190713_Taser_PatientMetadata.csv', header=TRUE, row.names=1)
 novel_peak_data <- read.csv(file='20200430_Taser_NEG_PeakIntensities.csv', header=TRUE, row.names=1)
 
+peak_metadata <- peak_metadata[,-c(1,2)]
 names(peak_metadata)[6] <- 'Peak_ID'
+
+# fix disease measures in resp_ints
+resp_diff_double <- rbind.data.frame(resp_diff,resp_diff)
+resp_diff_double <- with(resp_diff_double,resp_diff_double[order(Sample_Name),])
+resp_ints$CRP <- resp_diff_double$CRP
+resp_ints$DAS44 <- resp_diff_double$DAS44
+resp_ints$ESR <- resp_diff_double$ESR
+resp_ints$GHVAS <- resp_diff_double$GHVAS
+resp_ints$HAQ <- resp_diff_double$HAQ
+resp_ints$PVAS <- resp_diff_double$PVAS
+resp_ints$RAI <- resp_diff_double$RAI
+resp_ints$SJC <- resp_diff_double$SJC
+resp_ints$DAS44_Response[resp_ints$DAS44 < -2.4] <- 'Positive'
+resp_ints$DAS44_Response[resp_ints$DAS44 >= -2.4] <- 'Negative'
+
+ggplot(resp_ints)+
+  geom_bar(aes(DAS44_Response))
 
 ### Differential Analysis: Metabolic changes between positive and negative responders ----------
 resp_PN_ints <- subset(resp_ints, resp_ints$time =='A')
 resp_PN_ints <- resp_PN_ints[12:1596]
-resp_PN_ints$DAS44_Response[resp_PN_ints$DAS44_Response %like% 'Good'|resp_PN_ints$DAS44_Response %like% 'Remission'] <- 'Positive'
-resp_PN_ints$DAS44_Response[resp_PN_ints$DAS44_Response %like% 'Poor'|resp_PN_ints$DAS44_Response %like% 'Mild'] <- 'Negative'
+
 resp_PN_ints$DAS44_Response <- as.factor(resp_PN_ints$DAS44_Response)
 
 resp_PN_limma <- resp_PN_ints
@@ -70,7 +87,6 @@ names(resp_PN_limma_t)
 names(resp_PN_limma_t)[names(resp_PN_limma_t) %like% 'Positive'] <- 'Positive'
 names(resp_PN_limma_t)[names(resp_PN_limma_t) %like% 'Negative'] <- 'Negative'
 resp_PN_limma_t <- as.data.frame(resp_PN_limma_t)
-
 #Limma----
 Group <- factor(colnames(resp_PN_limma_t), levels = c('Positive', 'Negative'))
 design <- model.matrix (~Group)
@@ -89,7 +105,7 @@ toptable$Sig <- 0
 toptable$Sig <- ifelse(toptable$adj.P.Val <0.05, 'Significant', 'Not significant') 
 toptable$Sig_Peaks <- ifelse(toptable$P.Value<0.05 & toptable$Putative_Metabolite != '', toptable$Putative_Metabolite, '')
 toptable_dist <- distinct(toptable, Putative_Metabolite, .keep_all = TRUE)
-
+toptable_AF_sig <- subset(toptable_dist,toptable_dist$P.Value< 0.05)
 ggplot(data=toptable_dist, aes(x=logFC, y=-log10(P.Value), 
                                colour=Sig, 
                                group=Sig)) +
@@ -115,7 +131,7 @@ qobj <- qvalue(toptable$P.Value)
 hist(qobj)
 
 # PCA of samples
-scaled_intensities <- scale(t(resp_AF_limma_t))
+scaled_intensities <- scale(t(resp_PN_limma_t))
 scaled_intensities[do.call(cbind, lapply(scaled_intensities, is.nan))] <- 0
 
 pca_data <- prcomp(scaled_intensities)
@@ -125,8 +141,8 @@ var_explained[1:5]
 
 pca_coord$group <-as.factor(row.names(pca_coord))
 head(pca_coord$group )
-pca_coord$group[pca_coord$group %like% 'A'] <- 'A'
-pca_coord$group[pca_coord$group %like% 'F'] <- 'F'
+pca_coord$group[pca_coord$group %like% 'Positive'] <- 'Positive'
+pca_coord$group[pca_coord$group %like% 'Negative'] <- 'Negative'
 
 ggplot(pca_coord) + 
   geom_point(size=3, 
@@ -140,15 +156,31 @@ ggplot(pca_coord) +
 resp_ints_melt <- resp_ints[,c(2,13:1596)]
 resp_ints_melt <- melt(resp_ints_melt)
 names(resp_ints_melt) <- c('Sample_Name', 'Peak_ID', 'Peak_Intensity')
-resp_ints_melt$DAS44 <- resp_ints$DAS44
+resp_ints_melt$DAS44 <- resp_diff$DAS44
 resp_ints_melt$Peak_ID <- gsub('X','', resp_ints_melt$Peak_ID)
-resp_ints_melt$CRP <- resp_ints$CRP
-resp_ints_melt$ESR <- resp_ints$ESR
-resp_ints_melt$HAQ <- resp_ints$HAQ
-resp_ints_melt$GHVAS <- resp_ints$GHVAS
-resp_ints_melt$PVAS <- resp_ints$PVAS
-resp_ints_melt$RAI <- resp_ints$RAI
-resp_ints_melt$SJC <- resp_ints$SJC
+resp_ints_melt$CRP <- resp_diff$CRP
+resp_ints_melt$ESR <- resp_diff$ESR
+resp_ints_melt$HAQ <- resp_diff$HAQ
+resp_ints_melt$GHVAS <- resp_diff$GHVAS
+resp_ints_melt$PVAS <- resp_diff$PVAS
+resp_ints_melt$RAI <- resp_diff$RAI
+resp_ints_melt$SJC <- resp_diff$SJC
+
+resp_ints %>%
+  ggplot(aes(X25, X1037))+
+  geom_point(size=0.8, alpha=0.7) + 
+  stat_cor(method = "spearman", 
+           vjust=1, hjust=0,
+           size=5)+
+  geom_smooth(method='lm',
+              colour='red')+
+  theme(strip.background = element_rect(fill='white', 
+                                        size=1.5),
+        strip.text.x= element_text(face = "bold.italic",
+                                   size=12))+
+  labs(x='Tyrosine',
+       y='Phenylpyruvic acid')+
+  theme_minimal()
 
 # DAS44----
 # make sure all disease measures are included in the melted df
@@ -177,33 +209,50 @@ best_augmented <- bestest_fit %>%
   mutate(augmented = map(model, ~augment(.x))) %>% 
   unnest(augmented)
 best_augmented_sig <- subset(best_augmented, best_augmented$p.value< 0.05)
+good_augmented_sig <-  subset(best_augmented, best_augmented$p.value< 0.1)
 best_augmented_sig$Peak_ID <- as.numeric(best_augmented_sig$Peak_ID)
+good_augmented_sig$Peak_ID <- as.numeric(good_augmented_sig$Peak_ID)
 adj_p <- p.adjust(best_augmented_sig$p.value, method='BH')
 best_augmented_sig$adj_p <- adj_p
 
-best_adj <- subset(best_augmented_sig, best_augmented_sig$adj_p < 0.01) 
-sig_peaks <- distinct(best_adj, Peak_ID, .keep_all = TRUE)
-
+sig_peaks <- distinct(best_augmented_sig, Peak_ID, .keep_all = TRUE)
 peak_metadata_dist <- distinct(peak_metadata, Putative_Metabolite, .keep_all = TRUE)
-best_adj_hmdb <- inner_join(best_adj, peak_metadata_dist, by='Peak_ID')
-#best_adj_hmdb <- distinct(best_adj_hmdb, Putative_Metabolite, .keep_all = TRUE)
-best_adj_hmdb<- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='')
+best_adj_hmdb <- inner_join(best_augmented_sig, peak_metadata_dist, by='Peak_ID')
+good_p_hmdb <- inner_join(good_augmented_sig, peak_metadata_dist, by='Peak_ID')
 
-ggplot(best_adj_hmdb,aes(x = DAS44, y=Peak_Intensity)) +
-  geom_point() + 
+best_adj_hmdb_dist <- distinct(best_adj_hmdb, Putative_Metabolite, .keep_all = TRUE)
+good_p_hmdb_dist <- distinct(good_p_hmdb, Putative_Metabolite, .keep_all = TRUE)
+#write.csv(best_adj_hmdb_dist_2, '20210211_AF_base_das_keggs.csv')
+
+plot_aug <- best_adj_hmdb[,c(16,17,31)]
+no_mets <- c(6,60,183,186,341,513, 572, 658, 682, 683,1041,1226, 1375,1549)
+`%notin%` <- Negate(`%in%`)
+
+best_adj_hmdb_dist <- subset(best_adj_hmdb_dist,best_adj_hmdb_dist$Peak_ID %notin% no_mets)
+best_adj_hmdb_dist_2 <-best_adj_hmdb_dist
+best_adj_hmdb_dist_2$Peak_ID <- paste0('X',best_adj_hmdb_dist_2$Peak_ID)
+
+best_adj_hmdb%>%
+  subset(Peak_ID %notin% no_mets) %>%
+  subset(Peak_ID != '1037') %>%
+ggplot(aes(x = DAS44, y=Peak_Intensity)) +
+  geom_point(size=0.5, alpha=0.7) + 
   stat_cor(method = "spearman", 
-           vjust=1, hjust=0.1,
-           size=4)+
-  geom_line(aes(y = .fitted), color = "red") +
+           vjust=1, hjust=0,
+           size=3)+
+  geom_smooth(method='lm',
+              colour='red')+
   facet_wrap(~Putative_Metabolite, scales = "free_y")+
   theme(strip.background = element_rect(fill='white', 
                                         size=1.5),
         strip.text.x= element_text(face = "bold.italic",
                                    size=12))+
-  
   labs(x='ΔDAS44',
-       y='Peak Intensity')+
+       y='Peak Intensity',
+       title='Positive Ion Mode')+
   theme_minimal()
+
+
 
 ## Determine the most important features to predict clinical outcomes
 # Reduce number of features through those correlating peaks
@@ -212,10 +261,10 @@ resp_split <- resp_split[,-1]
 resp_split_t <- as.data.frame(t(resp_split))
 resp_split_t$Peak_ID <- rownames(resp_split_t)
 resp_split_t$Peak_ID <- gsub('X','', resp_split_t$Peak_ID)
-resp_split_done <- subset(resp_split_t, resp_split_t$Peak_ID %in% toptable_AF_sig$Peak_ID)
+#resp_split_done <- subset(resp_split_t, resp_split_t$Peak_ID %in% toptable_AF_sig$Peak_ID)
 #resp_split_done <- subset(resp_split_done, resp_split_done$Peak_ID %in% toptable_AF_sig$Peak_ID)
 
-resp_red <- resp_split_done[,-64]
+resp_red <- resp_split_t[,-64]
 resp_red_t <- as.data.frame(t(resp_red))
 resp_red_t$Response <- resp_PN_ints$DAS44_Response
 resp_red_t$Response <- as.character(resp_red_t$Response)
@@ -224,7 +273,7 @@ resp_red_t$Response <- as.character(resp_red_t$Response)
 #resp_red_t$Response <- as.numeric(resp_red_t$Response)
 
 set.seed(42)
-index <- createDataPartition(resp_red_t$Response, p = 0.85, list = FALSE)
+index <- createDataPartition(resp_red_t$Response, p = 0.8, list = FALSE)
 train_data <- resp_red_t[index, ]
 test_data  <- resp_red_t[-index, ]
 test_data$Response <- as.factor(test_data$Response)
@@ -238,13 +287,16 @@ model_rf <- caret::train(Response~.,
                          metric = "Accuracy",
                          tuneGrid=tuneGrid,
                          trControl = trainControl(method = "repeatedcv",
-                                                  number =10,
-                                                  repeats = 10, 
+                                                  number =15,
+                                                  repeats = 5, 
                                                   savePredictions = TRUE, 
                                                   verboseIter = FALSE, 
                                                   allowParallel = TRUE),
                          importance = TRUE,
                          ntree = 500)
+
+# num=15, rep=5, ntree=500, split=0.8 Acc= 0.667, K=0.23
+# num=15, rep=5, ntree=700, split=0.8 Acc= 0.667, K=0.27
 
 plot(model_rf)
 print(model_rf)
@@ -273,15 +325,24 @@ imps <- as.data.frame(imp_peaks$importance)
 imps$Peak_ID <- rownames(imps)
 imps <- imps[,-1]
 colnames(imps)[1] <- 'Importance'
-#imps <- subset(imps,imps$Importance >10)
+imps <- subset(imps,imps$Importance >10)# set 30 for initial selection but plot only > 50
 imps$Peak_ID <- gsub('X','', imps$Peak_ID)
 imps$Peak_ID <- as.numeric(imps$Peak_ID)
 
 imps_hmdb <- inner_join(imps, peak_metadata, by='Peak_ID')
 imps_hmdb <- distinct(imps_hmdb, Putative_Metabolite, .keep_all = TRUE)
 imps_hmdb <- subset(imps_hmdb, imps_hmdb$Putative_Metabolite !='')
+no_mets <- c(1041,683,186,175,513,183,1375,1103)
+imps_hmdb_2 <- subset(imps_hmdb,imps_hmdb$Peak_ID %notin% no_mets)
+
+cor_FI_mets <- subset(best_adj_hmdb_dist_2, best_adj_hmdb_dist_2$Peak_ID %in% imps_hmdb_2$Peak_ID)
+cor_FI_mets$Putative_Metabolite
+
+mets_LR <- paste0('X',good_p_hmdb_dist$Peak_ID)
+
+
 # Plot the annotated peaks from feature importance
-ggplot(imps_hmdb)+
+ggplot(imps_hmdb_2)+
   geom_col(aes(reorder(Putative_Metabolite, Importance), 
                Importance),
            fill=0x3a5e84,
@@ -298,14 +359,8 @@ resp_split <- resp_split[,-1]
 resp_split_t <- as.data.frame(t(resp_split))
 resp_split_t$Peak_ID <- rownames(resp_split_t)
 resp_split_t$Peak_ID <- gsub('X','', resp_split_t$Peak_ID)
-toptable_AF_sig_FC <- subset(toptable_AF_sig, toptable_AF_sig$adj.P.Val < 0.05 & toptable_AF_sig$Sig_Peaks != '')
-toptable_AF_sig_FC$logFCsqrd <- toptable_AF_sig_FC$logFC *toptable_AF_sig_FC$logFC
-toptable_AF_sig_FC <- distinct(toptable_AF_sig_FC, Putative_Metabolite, .keep_all = TRUE)
-toptable_AF_sig_FC <- subset(toptable_AF_sig_FC, toptable_AF_sig_FC$logFCsqrd > 0.5)
-resp_split_done <- subset(resp_split_t, resp_split_t$Peak_ID %in% toptable_AF_sig_FC$Peak_ID)
-#resp_split_done <- subset(resp_split_t, resp_split_t$Peak_ID %in% imps_hmdb$Peak_ID)
 
-resp_red <- resp_split_done[,-64]
+resp_red <- resp_split_t[,-64]
 resp_red_t <- as.data.frame(t(resp_red))
 resp_red_t$Response <- resp_PN_ints$DAS44_Response
 resp_red_t$Response <- as.character(resp_red_t$Response)
@@ -313,11 +368,25 @@ resp_red_t$Response[resp_red_t$Response=='Positive'] <- 1
 resp_red_t$Response[resp_red_t$Response=='Negative'] <- 0
 resp_red_t$Response <- as.integer(resp_red_t$Response)
 
+sig_dist_cor <- subset(best_adj_hmdb, best_adj_hmdb$adj_p < 0.05)
+sig_dist_cor <- distinct(sig_dist_cor, Peak_ID, .keep_all = TRUE)
+sig_dist_cor$ID <- sig_dist_cor$Peak_ID
+
+write.csv(resp_red_t, '20210218_AF_pos_LGR_matrix') 
+
 set.seed(42)
-index <- createDataPartition(resp_red_t$Response, p = 0.6, list = FALSE)
+index <- createDataPartition(resp_red_t$Response, p = 0.75, list = FALSE)
 train_data <- resp_red_t[index, ]
 test_data  <- resp_red_t[-index, ]
-model <- glm(Response ~.,family=binomial(link='logit'),data=train_data)
+
+model <- glm(Response ~  X423 + X25  + X1038 + X1037  +
+             X1030 + X274 + X484 ,
+             family=binomial(link='logit'),
+             data=train_data)
+
+#model_mets <- c('X602', 'X5','X6','X168', 'X558','X303','X1549',  'X328')
+#model_mets <- gsub('X','', model_mets)
+
 summary(model)
 anova(model, test="Chisq")
 pR2(model)
@@ -326,7 +395,7 @@ fitted.results <- ifelse(fitted.results > 0.5,1,0)
 misClasificError <- mean(fitted.results != test_data$Response)
 print(paste('Accuracy',1-misClasificError))
 
-1-pchisq(58.086-46.034, 53-43)
+1-pchisq(60.571-20.583, 44-36)
 
 library(ROCR) 
 p <- predict(model,newdata=test_data,type='response')
@@ -337,4 +406,28 @@ auc <- performance(pr, measure = "auc")
 auc <- auc@y.values[[1]]
 auc
 
-## refining features in model
+
+LR_mets <- c(423,25,1038,1037,1030,274,484) 
+good_p_hmdb_dist <- subset(good_p_hmdb_dist,good_p_hmdb_dist$Peak_ID == c(423,25,1038,1037,1030,274,484))
+good_p_hmdb_dist <- distinct(good_p_hmdb_dist, Putative_Metabolite, .keep_all = TRUE)
+good_p_hmdb_dist$Putative_Metabolite
+
+toptable$Sig_Peaks <- ifelse(toptable$Putative_Metabolite == LR_mets, toptable$Putative_Metabolite, '')
+toptable_dist <- distinct(toptable, Putative_Metabolite, .keep_all = TRUE)
+toptable_AF_sig <- subset(toptable_dist,toptable_dist$P.Value< 0.05)
+ggplot(data=toptable_dist, aes(x=logFC, y=-log10(P.Value), 
+                               colour=Sig, 
+                               group=Sig)) +
+  geom_point (alpha=0.7) +
+  theme_minimal() +
+  labs (x='LogFC',
+        y='-Log p-value',
+        colour='Signficance')+
+  geom_text_repel(aes(x = logFC, y = -log10(P.Value), label = Sig_Peaks),
+                  box.padding =1,
+                  max.overlaps = Inf,
+                  position = position_jitter(seed = 1),
+                  arrow = arrow(length = unit(0.0015, "npc"))) +  
+  theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
+        axis.title = element_text(size = rel(1.25)))+
+  scale_color_brewer(palette = "Set1")

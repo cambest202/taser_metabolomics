@@ -51,9 +51,15 @@ peak_metadata <- read.csv(file='20200521_Taser_POS_Peakdata.csv', header=TRUE, r
 
 sample_sheet = read.table (file="20200318_Taser_SampleSheet.csv", header=TRUE, row.names=1)
 patient_metadata <- read.csv(file='20190713_Taser_PatientMetadata.csv', header=TRUE, row.names=1)
-novel_peak_data <- read.csv(file='20200430_Taser_NEG_PeakIntensities.csv', header=TRUE, row.names=1)
 
-names(peak_metadata)[6] <- 'Peak_ID'
+## Add uncertainty around peak identification
+peak_metadata$Putative_Metabolite <- ifelse(peak_metadata$Putative_Metabolite == 'DG', paste0(peak_metadata$Putative_Metabolite,'?'),peak_metadata$Putative_Metabolite)
+peak_metadata$Putative_Metabolite <- ifelse(peak_metadata$Putative_Metabolite == 'LysoPC', paste0(peak_metadata$Putative_Metabolite,'?'),peak_metadata$Putative_Metabolite)
+peak_metadata$Putative_Metabolite <- ifelse(peak_metadata$Putative_Metabolite == 'LysoPE', paste0(peak_metadata$Putative_Metabolite,'?'),peak_metadata$Putative_Metabolite)
+peak_metadata$Putative_Metabolite <- ifelse(peak_metadata$Putative_Metabolite == 'PI', paste0(peak_metadata$Putative_Metabolite,'?'),peak_metadata$Putative_Metabolite)
+peak_metadata$Putative_Metabolite <- ifelse(peak_metadata$Putative_Metabolite == 'PC', paste0(peak_metadata$Putative_Metabolite,'?'),peak_metadata$Putative_Metabolite)
+peak_metadata$Putative_Metabolite <- ifelse(peak_metadata$Putative_Metabolite == 'GPC', paste0(peak_metadata$Putative_Metabolite,'?'),peak_metadata$Putative_Metabolite)
+peak_metadata$Putative_Metabolite <- ifelse(peak_metadata$Putative_Metabolite == 'PE', paste0(peak_metadata$Putative_Metabolite,'?'),peak_metadata$Putative_Metabolite)
 
 ### Differential Analysis: Metabolic changes between positive and negative responders ----------
 resp_PN_ints <- subset(resp_ints, resp_ints$time =='A')
@@ -87,7 +93,9 @@ toptable <- join(toptable, peak_metadata, by = 'Peak_ID')
 ##-----
 toptable$Sig <- 0
 toptable$Sig <- ifelse(toptable$adj.P.Val <0.05, 'Significant', 'Not significant') 
-toptable$Sig_Peaks <- ifelse(toptable$P.Value<0.05 & toptable$Putative_Metabolite != '', toptable$Putative_Metabolite, '')
+#toptable$Sig_Peaks <- ifelse(toptable$Putative_Metabolite %in% LR_mets, toptable$Putative_Metabolite, '')
+toptable$Sig_Peaks <- ifelse(toptable$adj.P.Val <0.05 & toptable$identification != '', toptable$Putative_Metabolite, '')
+
 toptable_dist <- distinct(toptable, Putative_Metabolite, .keep_all = TRUE)
 
 ggplot(data=toptable_dist, aes(x=logFC, y=-log10(P.Value), 
@@ -133,29 +141,43 @@ toptable_AF <- toptable_AF[,c(ncol(toptable_AF),1:(ncol(toptable_AF)-1))]
 toptable_AF$Peak_ID <- as.numeric(toptable_AF$Peak_ID)
 toptable_AF <- join(toptable_AF, peak_metadata, by = 'Peak_ID')
 ##-----
-toptable_AF$Sig <- 0
-toptable_AF$Sig <- ifelse(toptable_AF$adj.P.Val <0.05, 'Significant', 'Not significant') 
-toptable_AF$Sig_Peaks <- ifelse(toptable_AF$adj.P.Val<0.001 & toptable_AF$identification != '', toptable_AF$Putative_Metabolite, '')
+select_mets_syno <-c('Inosine', 'L-carnitine', 'L-Glutamine', 'Pyroglutamate', 'Thymine', 'L-valine')
+select_mets_syno_ID <- c(58, 23, 1232, 1069, 57, 1015)
 
+select_mets_das_ID <- c(602,6,168,558,303)
+select_mets_das_ID_all <- c(1038,243,400,25,423,1076)
+
+toptable_AF$Sig <- 0
+toptable_AF$Sig <- ifelse(toptable_AF$adj.P.Val <0.05, '< 0.05', '> 0.05') 
+#toptable_AF$Sig_Peaks <- ifelse(toptable_AF$Peak_ID %in% select_mets_syno_ID, toptable_AF$Putative_Metabolite, '')
+toptable_AF$Sig_Peaks <- ifelse(toptable_AF$P.Value<0.01 & toptable_AF$identification != '', toptable_AF$Putative_Metabolite, '')
+
+toptable_AF_ID <- subset(toptable_AF,toptable_AF$Putative_Metabolite != '')
 toptable_AF_sig <- subset(toptable_AF, toptable_AF$adj.P.Val <0.05)
 toptable_AF_sig_dist <- distinct(toptable_AF_sig, Putative_Metabolite, .keep_all = TRUE)
 
-ggplot(data=toptable_AF, aes(x=logFC, y=-log10(P.Value), 
+#write.csv(toptable_AF_ID, '20210218_AF_pos_diff.csv')
+
+ggplot(data=toptable_AF_ID, aes(x=logFC, y=-log10(P.Value), 
                           colour=Sig, 
                           group=Sig)) +
   geom_point (alpha=0.7) +
   theme_minimal() +
   labs (x='LogFC',
         y='-Log p-value',
-        colour='Signficance')+
+        colour='Adjusted \np-value',
+        title= 'Positive Ion Mode')+
   geom_text_repel(aes(x = logFC, y = -log10(P.Value), label = Sig_Peaks),
-                  box.padding =1,
+                  box.padding =1.2,
+                  size=2.5,
                   max.overlaps = Inf,
                   position = position_jitter(seed = 1),
-                  arrow = arrow(length = unit(0.0015, "npc"))) +  
+                  arrow = arrow(length = unit(0.005, "npc"))) +  
   theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
         axis.title = element_text(size = rel(1.25)))+
-  scale_color_brewer(palette = "Set1")
+  scale_color_brewer(palette = "Set1",direction=-1)+
+  ylim(0,4)+
+  xlim(-1,1)
 
  ## P-value histogram---
 # Adding local FDR, qvalue and π0 values to p-value histogram
@@ -238,12 +260,15 @@ adj_p <- p.adjust(best_augmented_sig$p.value, method='BH')
 best_augmented_sig$adj_p <- adj_p
 
 best_adj <- subset(best_augmented_sig, best_augmented_sig$adj_p < 0.05) 
-sig_peaks <- distinct(best_adj, Peak_ID, .keep_all = TRUE)
+sig_peaks <- inner_join(best_adj, peak_metadata, by='Peak_ID')
+sig_peaks<- subset(sig_peaks,sig_peaks$Putative_Metabolite != '')
+sig_peaks <- distinct(sig_peaks, Peak_ID, .keep_all = TRUE)
 
 best_adj_hmdb <- inner_join(best_adj, peak_metadata, by='Peak_ID')
-best_adj_hmdb <- distinct(best_adj_hmdb, Putative_Metabolite, .keep_all = TRUE)
+#best_adj_hmdb <- distinct(best_adj_hmdb, Putative_Metabolite, .keep_all = TRUE)
 best_adj_hmdb<- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='')
-
+best_adj_hmdb$Peak_ID2 <- best_adj_hmdb$Peak_ID
+best_adj_hmdb<- subset(best_adj_hmdb,best_adj_hmdb$Peak_ID != '168')
 das_metabolites <-best_adj_hmdb 
 colnames(das_metabolites)[17] <-'Disease_Measure'
 das_metabolites$Disease_Measure_Type <- 'DAS'
@@ -359,7 +384,7 @@ haq_metabolites <-best_adj_hmdb
 colnames(haq_metabolites)[17] <-'Disease_Measure'
 haq_metabolites$Disease_Measure_Type <- 'HAQ'
 
-ggplot(best_adj_hmdb,aes(x = HAQ, y=Peak_Intensity)) +
+ggplot(good_,aes(x = HAQ, y=Peak_Intensity)) +
   geom_point() + 
   stat_cor(method = "pearson", 
            vjust=1, hjust=0.1,
@@ -461,6 +486,8 @@ best_augmented_sig$adj_p <- adj_p
 
 best_adj <- subset(best_augmented_sig, best_augmented_sig$adj_p < 0.5) 
 sig_peaks <- distinct(best_adj, Peak_ID, .keep_all = TRUE)
+sig_peaks$ID <- sig_peaks$Peak_ID
+sig_peaks <- subset(sig_peaks,sig_peaks$Putative_Metabolite != '')
 
 best_adj_hmdb <- inner_join(best_adj, peak_metadata, by='Peak_ID')
 #best_adj_hmdb <- distinct(best_adj_hmdb, Putative_Metabolite, .keep_all = TRUE)
@@ -545,7 +572,7 @@ resp_red_t$Response <- as.character(resp_red_t$Response)
 #resp_red_t$Response <- as.numeric(resp_red_t$Response)
 
 set.seed(42)
-index <- createDataPartition(resp_red_t$Response, p = 0.85, list = FALSE)
+index <- createDataPartition(resp_red_t$Response, p = 0.8, list = FALSE)
 train_data <- resp_red_t[index, ]
 test_data  <- resp_red_t[-index, ]
 test_data$Response <- as.factor(test_data$Response)
@@ -553,14 +580,14 @@ cores <- makeCluster(detectCores()-1)
 registerDoParallel(cores = cores)
 tuneGrid <- expand.grid(.mtry = c(1:sqrt(1458)))
 set.seed(42)
-model_rf <- caret::train(Response~.,
+model_rf <- train(Response~.,
                          data = train_data,
-                         method = "rf",
+                         method = "sv",
                          metric = "Accuracy",
                          tuneGrid=tuneGrid,
                          trControl = trainControl(method = "repeatedcv",
-                                                  number =10,
-                                                  repeats = 10, 
+                                                  number =5,
+                                                  repeats = 5, 
                                                   savePredictions = TRUE, 
                                                   verboseIter = FALSE, 
                                                   allowParallel = TRUE),
@@ -635,10 +662,15 @@ resp_red_t$Response[resp_red_t$Response=='Negative'] <- 0
 resp_red_t$Response <- as.integer(resp_red_t$Response)
 
 set.seed(42)
-index <- createDataPartition(resp_red_t$Response, p = 0.6, list = FALSE)
+index <- createDataPartition(resp_red_t$Response, p = 0.8, list = FALSE)
 train_data <- resp_red_t[index, ]
 test_data  <- resp_red_t[-index, ]
-model <- glm(Response ~.,family=binomial(link='logit'),data=train_data)
+
+model <- glm(Response ~    X157 + X168 +  X322 + X414 ,
+             family=binomial(link='logit'),
+             data=train_data)
+
+?glm
 summary(model)
 anova(model, test="Chisq")
 pR2(model)
@@ -658,12 +690,20 @@ auc <- performance(pr, measure = "auc")
 auc <- auc@y.values[[1]]
 auc
 
-### Directly investigating differential abundance of metabolites of interest
-resp_diff_sel <- resp_diff[,c(13:1597)]
-resp_diff_sel_t <- as.data.frame(t(resp_diff_sel))
-resp_diff_sel_t$Peak_ID <- rownames(resp_diff_sel_t)
-resp_diff_sel_t$Peak_ID <- gsub('X', '', resp_diff_sel_t$Peak_ID)
-resp_diff_sel_t$Peak_ID <- as.numeric(resp_diff_sel_t$Peak_ID)
-
-
-
+## Assess selected metabolites for predicting response
+resp_diff_melt2 <- resp_diff_melt
+resp_diff_melt2$Response <- resp_PN_ints$DAS44_Response
+select <- c('932', '168', '1137', '157','37')
+resp_diff_melt2 %>%
+  subset(Peak_ID %in% select) %>%
+  ggplot(aes(Response, Peak_Intensity,
+             fill=Response))+
+  theme_light()+
+  geom_violin()+
+  geom_boxplot(width=0.1, color="grey", alpha=0.2) +
+  stat_compare_means(method= 'wilcox.test',
+                     label = "p.format",
+                     vjust=1, 
+                     hjust=-1)+
+  theme(legend.position = 'none')+
+  labs(y='Peak Intensity') 

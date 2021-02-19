@@ -56,6 +56,10 @@ library(devtools)
 library(e1071)
 library(ggraph)
 library(igraph)
+library(pscl)
+library(parallel)
+library(doParallel)
+library(ROCR) 
 
 setwd('/Users/cameronbest/University/MRC_DTP_in_Precision_Medicine/Project/RA/Taser_data/Analysis/taser_metabolomics')
 
@@ -64,19 +68,23 @@ resp_ints <- read.csv('20201105_resp_ints.csv', header=TRUE)
 resp_diff <- read.csv('20201105_resp_diff.csv', header=TRUE)
 peak_IDs <- read.table (file="20200117_Taser_PeakIDs.csv", header=TRUE, row.names=1, sep= "\t")
 peak_ID_HMDB <- read.csv(file='peak_IDs_HMDB.csv', header=TRUE, row.names=1)
-peak_metadata <- read.csv(file='20200427_Taser_PeakMetadata.csv', header=TRUE, row.names=1)
+peak_metadata <- read.csv(file='20210217_neg_peak_metadata.csv', header=TRUE)
+
+## Add uncertainty around peak identification
+peak_ID_HMDB$Putative_Metabolite <- ifelse(peak_ID_HMDB$Putative_Metabolite == 'DG', paste0(peak_ID_HMDB$Putative_Metabolite,'?'),peak_ID_HMDB$Putative_Metabolite)
+peak_ID_HMDB$Putative_Metabolite <- ifelse(peak_ID_HMDB$Putative_Metabolite == 'LysoPC', paste0(peak_ID_HMDB$Putative_Metabolite,'?'),peak_ID_HMDB$Putative_Metabolite)
+peak_ID_HMDB$Putative_Metabolite <- ifelse(peak_ID_HMDB$Putative_Metabolite == 'LysoPE', paste0(peak_ID_HMDB$Putative_Metabolite,'?'),peak_ID_HMDB$Putative_Metabolite)
+peak_ID_HMDB$Putative_Metabolite <- ifelse(peak_ID_HMDB$Putative_Metabolite == 'PI', paste0(peak_ID_HMDB$Putative_Metabolite,'?'),peak_ID_HMDB$Putative_Metabolite)
+peak_ID_HMDB$Putative_Metabolite <- ifelse(peak_ID_HMDB$Putative_Metabolite == 'PI', paste0(peak_ID_HMDB$Putative_Metabolite,'?'),peak_ID_HMDB$Putative_Metabolite)
+
 
 sample_sheet = read.table (file="20200318_Taser_SampleSheet.csv", header=TRUE, row.names=1)
 patient_metadata <- read.csv(file='20190713_Taser_PatientMetadata.csv', header=TRUE, row.names=1)
 novel_peak_data <- read.csv(file='20200430_Taser_NEG_PeakIntensities.csv', header=TRUE, row.names=1)
 
-peak_ID_HMDB[13,5] <- '4-Hydroxybutyric acid'
-names(sample_sheet)[2] <- 'Sample_Name'
 peak_IDs$Peak_ID <- rownames(peak_IDs)
 peak_IDs$Peak_ID  <- as.numeric(peak_IDs$Peak_ID )
 peak_IDs$moleculeName  <- as.character(peak_IDs$moleculeName )
-colnames(peak_metadata)[6] <- 'Peak_ID'
-peak_metadata <- left_join(peak_metadata, peak_IDs, by='Peak_ID')
 names(sample_sheet)[2] <- 'Sample_Name'
 
 peak_metadata_IDs <- subset(peak_metadata, peak_metadata$identification != '')
@@ -138,34 +146,46 @@ limma_fun <- function(matrix_AB, no., var1, var2){
 
 AF_limma <- limma_fun(resp_differential_t, 1500, 'A', 'F')
 AF_limma$Sig <- 0
-AF_limma$Sig <- ifelse(AF_limma$adj.P.Val <0.05, 'Significant', 'Not significant') 
-AF_limma$Sig_Peaks <- ifelse(AF_limma$adj.P.Val<0.001 & AF_limma$identification != '', AF_limma$Peak_ID, '')
+AF_limma$Sig <- ifelse(AF_limma$adj.P.Val <0.05, '< 0.05', '> 0.05') 
+AF_limma$Sig_Peaks <- ifelse(AF_limma$adj.P.Val<0.05 & AF_limma$identification != '', AF_limma$Peak_ID, '')
 
-AF_limma_hmdb <- inner_join(AF_limma, peak_ID_HMDB, by='Peak_ID')
-AF_limma_hmdb$Sig_Peaks <- ifelse(AF_limma_hmdb$adj.P.Val<0.05, AF_limma_hmdb$Putative_Metabolite, '')
+select_mets <- c(74, 162, 196, 738, 947, 1199)
+only_mets <- c(1199, 738,196,947,74,162)
 
+#AF_limma_hmdb <- inner_join(AF_limma, peak_metadata, by='Peak_ID')
+AF_limma_hmdb <- AF_limma
+AF_limma_hmdb$Sig_Peaks <-0
+#AF_limma_hmdb$Sig_Peaks <- ifelse(AF_limma_hmdb$Peak_ID %in% only_mets,AF_limma_hmdb$Putative_Metabolite, '')
+AF_limma_hmdb$Sig_Peaks <- ifelse(AF_limma_hmdb$adj.P.Val <0.05 & AF_limma_hmdb$identification.x != '', AF_limma_hmdb$Putative_Metabolite, '')
+
+AF_limma_hmdb_sig <- subset(AF_limma_hmdb,AF_limma_hmdb$adj.P.Val < 0.05)
 AF_limma_hmdb_dist <- distinct(AF_limma_hmdb, Putative_Metabolite, .keep_all = TRUE)
 
 AF_limma_hmdb_dist$Sig <- as.factor(AF_limma_hmdb_dist$Sig)
+AF_limma_hmdb_dist$Peak_ID_2 <- AF_limma_hmdb_dist$Peak_ID
+write.csv(AF_limma_hmdb_dist, '20210218_AF_neg_diff.csv')
 
-ggplot(data=AF_limma_hmdb_dist, aes(x=logFC, y=-log10(P.Value), 
-                          colour=Sig, 
-                          group=Sig)) +
+AF_limma_hmdb_dist%>%
+ggplot(aes(x=logFC, y=-log10(P.Value), 
+                                colour=Sig, 
+                                group=Sig)) +
   geom_point (alpha=0.7) +
   theme_minimal() +
   labs (x='LogFC',
         y='-Log p-value',
-        colour='Signficance')+
+        colour='Adjusted \np-value',
+        title= 'Negative Ion Mode')+
   geom_text_repel(aes(x = logFC, y = -log10(P.Value), label = Sig_Peaks),
-                   box.padding =1,
-                   max.overlaps = Inf,
-                   position = position_jitter(seed = 1),
-                   arrow = arrow(length = unit(0.0015, "npc"))) +  
+                  box.padding =1.2,
+                  size=2.5,
+                  max.overlaps = Inf,
+                  position = position_jitter(seed = 1),
+                  arrow = arrow(length = unit(0.005, "npc"))) +  
   theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
         axis.title = element_text(size = rel(1.25)))+
-  scale_color_brewer(palette = "Set1")+
-  ylim(0,17)+
-  xlim(-2,5)
+  scale_color_brewer(palette = "Set1",direction=-1)+
+  ylim(0,4)+
+  xlim(-1.5,1.5)
 
 # Histogram of p-values 
 alpha <- binw <- 0.05 #where α = 0.05
@@ -217,8 +237,10 @@ theme_classic2()
 # Generate the model
 # Set training and testing data
 #colnames(resp_diff_ML_2)[2:1459] <- paste0('X', colnames(resp_diff_ML_2)[2:1459])
+names(resp_diff_ML_2)[1] <- 'Response'
+names(resp_diff_ML_2)[2:1459] <- paste0('X', names(resp_diff_ML_2)[2:1459])
 set.seed(42)
-index <- createDataPartition(resp_diff_ML_2$DAS44_Response, p = 0.7, list = FALSE)
+index <- createDataPartition(resp_diff_ML_2$Response, p = 0.7, list = FALSE)
 train_data <- resp_diff_ML_2[index, ]
 test_data  <- resp_diff_ML_2[-index, ]
 
@@ -279,21 +301,45 @@ control <- trainControl(method="repeatedcv",
 tunegrid <- expand.grid(.mtry=c(1:sqrt(1458)),.ntree=c(300,500,700))
 
 set.seed(42)
-custom <- caret::train(DAS44_Response~., data=train_data, 
-                       method=customRF, 
+custom <- caret::train(Response~., data=train_data, 
+                       method='rf', 
                        metric='Accuracy', 
                        tuneGrid=tunegrid, 
                        trControl=control)
+
+
+set.seed(42)
+index <- createDataPartition(resp_diff_ML_2$Response, p = 0.7, list = FALSE)
+train_data <- resp_diff_ML_2[index, ]
+test_data  <- resp_diff_ML_2[-index, ]
+
+tunegrid <- expand.grid(.mtry=c(1:sqrt(1458)))
+cores <- makeCluster(detectCores()-1)
+registerDoParallel(cores = cores)
+set.seed(42)
+model_rf <- caret::train(Response~.,
+                         data = train_data,
+                         method = "rf",
+                         metric = "Accuracy",
+                         tuneGrid=tunegrid,
+                         trControl = trainControl(method = "repeatedcv",
+                                                  number =10,
+                                                  repeats = 5, 
+                                                  savePredictions = TRUE, 
+                                                  verboseIter = FALSE, 
+                                                  allowParallel = TRUE),
+                         importance = TRUE,
+                         ntree = 500)
 
 summary(custom)
 
 plot(custom)
 stopCluster(cores)
 
-test_results <- predict(custom, newdata = test_data)
+test_results <- predict(model_rf, newdata = test_data)
 summary(test_results)
-summary(test_data$DAS44_Response)
-confusionMatrix(test_results, test_data$DAS44_Response)
+summary(test_data$Response)
+confusionMatrix(test_results, test_data$Response)
 
 final <- data.frame(actual = test_data$DAS44_Response,
                     predict(custom, newdata = test_data, type = "prob"))
@@ -323,7 +369,7 @@ imps_hmdb_id <- subset(imps_hmdb, imps_hmdb$Putative_Metabolite !='NA')
 imps_hmdb_id <- distinct(imps_hmdb_id, Putative_Metabolite, .keep_all = TRUE)
 imps_hmdb_id$Putative_Metabolite <- as.factor(imps_hmdb_id$Putative_Metabolite)
 
-write.csv(imps_hmdb_id, '20210111_AF_diff_das_FI_metabolites.csv')
+#write.csv(imps_hmdb_id, '20210111_AF_diff_das_FI_metabolites.csv')
 
 # Plot the annotated peaks from feature importance
 imps_hmdb_id <- read.csv('20210111_AF_diff_das_FI_metabolites.csv')
@@ -343,6 +389,14 @@ ggplot(imps_hmdb_id)+
 # DAS44----
 resp_melt_top <- subset(resp_diff_melt, resp_diff_melt$Peak_ID %in% peak_ID_HMDB$Peak_ID)
 # make sure all disease measures are included in the melted df
+resp_melt_top%>%
+  subset(Peak_ID =='74')%>%
+  ggplot(aes(y=Peak_Intensity, x=DAS44))+
+  geom_point()+
+  theme_light()+
+  geom_smooth(method='lm')+
+  stat_cor()
+
 
 ints_nested <- resp_melt_top %>%
     group_by (Peak_ID) %>%
@@ -381,7 +435,7 @@ best_adj <- subset(best_augmented_sig, best_augmented_sig$adj_p < 0.05)
 best_adj_hmdb <- inner_join(best_adj, peak_ID_HMDB, by='Peak_ID')
 best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='NA')
 sig_peaks <- distinct(best_adj_hmdb, Peak_ID, .keep_all = TRUE)
-
+sig_peaks$ID <- sig_peaks$Peak_ID
 DAS_metabolites <- best_adj_hmdb
 colnames(DAS_metabolites)[17] <-'Disease_Measure'
 DAS_metabolites$Disease_Measure_Type <- 'DAS44'
@@ -1385,7 +1439,7 @@ resp_lr_mets$Response <- as.numeric(resp_lr_mets$Response)
 names(resp_lr_mets)[2:13] <- paste0('X', names(resp_lr_mets)[2:13])
 
 set.seed(42)
-index <- createDataPartition(resp_lr_mets$Response, p = 0.8, list = FALSE) # 0.8
+index <- createDataPartition(resp_lr_mets$Response, p = 0.85, list = FALSE) # 0.8
 train_data <- resp_lr_mets[index, ]
 test_data  <- resp_lr_mets[-index, ]
 
@@ -1411,11 +1465,28 @@ auc <- auc@y.values[[1]]
 auc
 
 # Repeat using fewer variables. Do this to avoid overfitting, selecting only the most significant
-model <- glm(Response ~ X270 + X711 +X738 ,family=binomial(link='logit'),data=train_data)
+set.seed(42)
+resp_diff_ML_2$Response <- as.character(resp_diff_ML_2$Response)
+resp_diff_ML_2$Response[resp_diff_ML_2$Response =='Positive'] <- 1
+resp_diff_ML_2$Response[resp_diff_ML_2$Response =='Negative'] <- 0
+resp_diff_ML_2$Response<- as.factor(resp_diff_ML_2$Response)
+set.seed(42)
+index <- createDataPartition(resp_diff_ML_2$Response, p = 0.8, list = FALSE) # 0.8
+train_data <- resp_diff_ML_2[index, ]
+test_data  <- resp_diff_ML_2[-index, ]
+#model <- glm(Response ~ X85 + X89 + X124 + X216 + X270 + X406 + X415 + X564 + X692 + X1068 + X1028 + X1292,family=binomial(link='logit'),data=train_data)
+
+model <- glm(Response ~ X692 + X964 + X711 ,
+             family=binomial(link='logit'),
+             data=train_data)
+
+
 summary(model)
 confint(model)
 anova(model, test="Chisq") # check the overall effect of the variables on the dependent variable
 pR2(model)
+1-pchisq(63.449-43.857, 50-44)
+
 fitted.results <- predict(model,newdata=test_data,type='response')
 fitted.results <- ifelse(fitted.results > 0.5,1,0)
 misClasificError <- mean(fitted.results != test_data$Response)
@@ -1428,5 +1499,5 @@ plot(prf)
 auc <- performance(pr, measure = "auc")
 auc <- auc@y.values[[1]]
 auc # higher the score, the better the model
-
+ 
 

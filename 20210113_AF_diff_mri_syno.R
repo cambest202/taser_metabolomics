@@ -102,11 +102,17 @@ mri_melt$RAI <- mri_resp$RAI
 mri_melt$SJC <- mri_resp$SJC
 names(mri_melt)[1:3] <- c('Sample_Name', 'Peak_ID', 'Peak_Intensity')
 
+mri_dis_act <- mri_resp[,c(1,6:13)]
+mri_dis_act_melt <- melt(mri_dis_act)
+
+names(mri_dis_act_melt) <- c('Sample_Name', 'Disease_Measure', 'Unit_Change')
 mri_resp$Syno_Response <- 0
 mri_pre_limma <- mri_resp[, c(3,1475,17:1474)]
 mean(mri_pre_limma$ΔMRI_Synovitis)
 median(mri_pre_limma$ΔMRI_Synovitis)
 histogram(mri_pre_limma$ΔMRI_Synovitis)
+
+mri_dis_act_melt$MRI_Synovitis <- mri_resp$ΔMRI_Synovitis
 
 mri_pre_limma$Syno_Response[mri_pre_limma$ΔMRI_Synovitis >=-6.5] <- 'Negative'
 mri_pre_limma$Syno_Response[mri_pre_limma$ΔMRI_Synovitis < -6.5] <- 'Positive'
@@ -147,7 +153,7 @@ limma_fun <- function(matrix_AB, no., var1, var2){
 
 mri_limma <- limma_fun(mri_pre_limma_t, 1500, 'Negative', 'Positive')
 mri_limma$Sig <- 0
-mri_limma$Sig <- ifelse(mri_limma$adj.P.Val <0.05, 1, 0) 
+mri_limma$Sig <- ifelse(mri_limma$adj.P.Val <0.05, 'Significant', 'Not signicant') 
 mri_limma$Sig_Peaks <- ifelse(mri_limma$P.Value<0.05 & mri_limma$identification != '', mri_limma$Peak_ID, '')
 
 mri_limma_hmdb <- inner_join(mri_limma, peak_ID_HMDB, by='Peak_ID')
@@ -159,14 +165,13 @@ ggplot(data=mri_limma_hmdb, aes(x=logFC, y=-log10(P.Value),
   geom_point (alpha=0.7) +
   theme_light() +
   labs (x='LogFC',
-        y='-Log p-value',
-        title='MRI Synovitis: Differential Analysis of Metabolites \nBetween Erosion Scoring Outcomes') +
+        y='-Log p-value')+
   geom_text_repel(aes(x = logFC, y = -log10(P.Value), label = Sig_Peaks),
                   box.padding =1,
                   max.overlaps = Inf,
                   position = position_jitter(seed = 1),
                   arrow = arrow(length = unit(0.0015, "npc"))) +  
-  theme(legend.position = "none",
+  theme(
         plot.title = element_text(size = rel(1.5), hjust = 0.5),
         axis.title = element_text(size = rel(1.25)))
 
@@ -215,6 +220,8 @@ index <- createDataPartition(mri_pre_limma_2$Syno_Response, p = 0.7, list = FALS
 train_data <- mri_pre_limma_2[index, ]
 test_data  <- mri_pre_limma_2[-index, ]
 tunegrid <- expand.grid(.mtry=c(1:sqrt(1458)))
+cores <- makeCluster(detectCores()-1)
+registerDoParallel(cores = cores)
 set.seed(42)
 model_rf <- caret::train(Syno_Response~.,
                          data = train_data,
@@ -222,8 +229,8 @@ model_rf <- caret::train(Syno_Response~.,
                          metric = "Accuracy",
                          tuneGrid=tunegrid,
                          trControl = trainControl(method = "repeatedcv",
-                                                  number =5,
-                                                  repeats = 3, 
+                                                  number =10,
+                                                  repeats = 5, 
                                                   savePredictions = TRUE, 
                                                   verboseIter = FALSE, 
                                                   allowParallel = TRUE),
@@ -289,6 +296,14 @@ mri_melt$Peak_ID <- gsub('X','', mri_melt$Peak_ID)
 mri_melt_top <- subset(mri_melt, mri_melt$Peak_ID %in% peak_ID_HMDB$Peak_ID)
 # make sure all disease measures are included in the melted df
 
+mri_melt_top%>%
+  subset(Peak_ID =='74')%>%
+  ggplot(aes(y=Peak_Intensity, x=MRI_Synovitis))+
+  geom_point()+
+  theme_light()+
+  geom_smooth(method='lm')+
+  stat_cor()
+
 ints_nested <- mri_melt_top %>%
   group_by (Peak_ID) %>%
   nest()
@@ -314,7 +329,7 @@ top_50_peaks <- head(bestest_fit, 50)
 top_100_peaks <- head(bestest_fit, 100)
 top_200_peaks <- head(bestest_fit, 200)
 
-best_augmented <- top_200_peaks %>% 
+best_augmented <- bestest_fit %>% 
   mutate(augmented = map(model, ~augment(.x))) %>% 
   unnest(augmented)
 best_augmented_sig <- subset(best_augmented, best_augmented$p.value< 0.05)
@@ -331,13 +346,12 @@ best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='NA')
 best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite != 'Citrate')
 
 sig_peaks <- distinct(best_adj_hmdb, Peak_ID, .keep_all = TRUE)
-sig_peaks <- sig_peaks[-4,]
-
+sig_peaks$ID <- sig_peaks$Peak_ID
 mri_syn <-best_adj_hmdb 
 colnames(mri_syn)[17] <-'Disease_Measure'
 mri_syn$Disease_Measure_Type <- 'MRI_Synovitis'
 
-ggplot(best_adj_hmdb,aes(x = MRI_Erosion, y=Peak_Intensity)) +
+ggplot(best_adj_hmdb,aes(x = MRI_Synovitis, y=Peak_Intensity)) +
   geom_point() + 
   stat_cor(method = "spearman", 
            vjust=1, hjust=0.1,
@@ -348,10 +362,9 @@ ggplot(best_adj_hmdb,aes(x = MRI_Erosion, y=Peak_Intensity)) +
                                         size=1.5),
         strip.text.x= element_text(face = "bold.italic",
                                    size=12))+
-  labs(x='ΔMRI Erosion',
+  labs(x='ΔMRI Synovitis',
        y='ΔPeak Intensity')+
-  theme_minimal()+
-  xlim(-2,5)
+  theme_minimal()
 
 mets_reduce <- function(disease_df){
   disease_met <- disease_df[c(28:29)]
@@ -459,4 +472,131 @@ auc <- performance(pr, measure = "auc")
 auc <- auc@y.values[[1]]
 auc # higher the score, the better the model
 
+
+### Correlating synovitis with the disease measures
+
+ints_nested <- mri_dis_act_melt %>%
+  group_by (Disease_Measure) %>%
+  nest()
+ints_unnested <- mri_dis_act_melt %>%
+  unnest(cols=c())
+identical(mri_dis_act_melt, ints_unnested)
+ints_lm <- ints_nested %>%
+  mutate(model = map(data, ~lm(formula = Unit_Change~MRI_Synovitis, data = .x)))
+model_coef_nested <- ints_lm %>%
+  mutate(coef=map(model, ~tidy(.x)))
+model_coef <- model_coef_nested %>%
+  unnest(coef)
+model_perf_nested <- ints_lm %>%
+  mutate(fit=map(model, ~glance(.x)))
+model_perf <- model_perf_nested%>%
+  unnest(fit)
+best_fit <- model_perf %>%
+  top_n(n=4, wt=r.squared)
+bestest_fit <- with(model_perf,model_perf[order(-r.squared),])
+
+best_augmented <- bestest_fit %>% 
+  mutate(augmented = map(model, ~augment(.x))) %>% 
+  unnest(augmented)
+
+ggplot(best_augmented,aes(x = MRI_Synovitis, y=Unit_Change)) +
+  geom_point() + 
+  stat_cor(method = "pearson", 
+           vjust=1, hjust=0.1,
+           size=4)+
+  geom_smooth(method=lm)+
+  facet_wrap(~Disease_Measure, scales = "free_y")+
+  theme(strip.background = element_rect(fill='white', 
+                                        size=1.5),
+        strip.text.x= element_text(face = "bold.italic",
+                                   size=12))+
+  labs(x='ΔMRI Synovitis',
+       y='ΔUnits of Disease Measurement')+
+  theme_minimal()+
+  xlim(-2,5)
+
+
+resp_ints_melt <- resp_ints[c(8:1466)]
+resp_ints_melt <- melt(resp_ints_melt)
+names(resp_ints_melt) <- c('Response','Peak_ID','Peak_Intensity')
+resp_ints_melt$Peak_ID <- gsub('X', '', resp_ints_melt$Peak_ID)
+
+resp_ints_melt_select <- subset(resp_ints_melt, resp_ints_melt$Peak_ID %in% peak_ID_HMDB$Peak_ID)
+
+stat_test <- resp_ints_melt_select %>%
+  group_by(Peak_ID) %>%
+  rstatix::wilcox_test(Peak_Intensity ~ Response) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance()
+
+resp_ints_stats <- inner_join(resp_ints_melt_select, stat_test, by='Peak_ID')
+resp_ints_stats$Peak_ID <- gsub('X', '', resp_ints_stats$Peak_ID)
+resp_ints_stats$Peak_ID <- as.numeric(resp_ints_stats$Peak_ID)
+
+resp_ints_stats_hmdb <- inner_join(resp_ints_stats, peak_ID_HMDB, by='Peak_ID')
+resp_ints_stats_hmdb_id <- subset(resp_ints_stats_hmdb, resp_ints_stats_hmdb$Putative_Metabolite !='NA')  
+
+# Influence of response on selected metabolic profile
+resp_ints_prof <- mri_pre_limma[,c(2:1460)]
+rownames(resp_ints_prof) <- paste0(rownames(resp_ints_prof), resp_ints_prof$Response)
+resp_ints_prof <- resp_ints_prof[,-1]
+resp_ints_prof_t <- as.data.frame(t(resp_ints_prof))
+resp_ints_prof_t$Peak_ID <- rownames(resp_ints_prof_t)
+resp_ints_prof_t$Peak_ID <- gsub('X', '', resp_ints_prof_t$Peak_ID)
+resp_ints_prof_sel <- subset(resp_ints_prof_t, resp_ints_prof_t$Peak_ID %in% sig_peaks$Peak_ID)
+resp_ints_prof_sel <- resp_ints_prof_sel[,-40]
+resp_ints_prof_sel_t <- as.data.frame(t(resp_ints_prof_sel))
+resp_ints_prof_sel_t$Response <- mri_pre_limma$Syno_Response
+resp_ints_prof_sel_t <- resp_ints_prof_sel_t[,c(ncol(resp_ints_prof_sel_t),1:(ncol(resp_ints_prof_sel_t)-1))]
+
+resp_ints_prof_melt <- melt(resp_ints_prof_sel_t)
+names(resp_ints_prof_melt) <- c('Response', 'Peak_ID', 'Peak_Intensity')
+resp_ints_prof_melt %>%
+  ggplot(aes(Response, Peak_Intensity,
+             fill=Response))+
+  theme_light()+
+  geom_violin()+
+  geom_boxplot(width=0.1, color="grey", alpha=0.2) +
+  stat_compare_means(method= 'wilcox.test',
+                     label = "p.format",
+                     vjust=1, 
+                     hjust=-1)+
+  theme(legend.position = 'none')+
+  labs(y='ΔMean Peak Intensity')+
+  ylim(-2,2.5)
+
+# Repeat using fewer variables. Do this to avoid overfitting, selecting only the most significant
+mri_comb_mets <- mri_pre_limma_2
+names(mri_comb_mets)[1] <- 'Response'
+mri_comb_mets$Response[mri_comb_mets$Response == 'Positive'] <- 1
+mri_comb_mets$Response[mri_comb_mets$Response == 'Negative'] <- 0
+
+mri_comb_mets$Response <- as.factor(mri_comb_mets$Response)
+set.seed(42)
+index <- createDataPartition(mri_comb_mets$Response, p = 0.65, list = FALSE)
+train_data <- mri_comb_mets[index, ]
+test_data  <- mri_comb_mets[-index, ]
+
+model <- glm(Response ~  X74  +X270 + X738 X1028+   +X1102 ,
+             family=binomial(link='logit'),
+             data=train_data)
+
+summary(model)
+confint(model)
+anova(model, test="Chisq") # check the overall effect of the variables on the dependent variable
+pR2(model)
+1-pchisq(47.134-32.984, 33-28)
+
+fitted.results <- predict(model,newdata=test_data,type='response')
+fitted.results <- ifelse(fitted.results > 0.5,1,0)
+misClasificError <- mean(fitted.results != test_data$Response, digits=4)
+print(paste('Accuracy',1-misClasificError))
+
+p <- predict(model,newdata=test_data,type='response')
+pr <- prediction(p, test_data$Response)
+prf <- performance(pr, measure = "tpr", x.measure = "fpr")
+plot(prf)
+auc <- performance(pr, measure = "auc")
+auc <- auc@y.values[[1]]
+auc # higher the score, the better the model
 

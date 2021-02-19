@@ -54,7 +54,6 @@ novel_peak_data <- read.csv(file='20200430_Taser_NEG_PeakIntensities.csv', heade
 mri_erosion <- read.csv('20201202_MRI_mean.csv', header=TRUE, na.strings=c("","NA"))
 xray_erosion <- read.csv('20201202_xray_mean.csv', header=TRUE, na.strings=c("","NA"))
 
-names(peak_metadata)[6] <- 'Peak_ID'
 names(mri_erosion)[1] <- 'Sample_Name'
 ### Differential Analysis: Metabolic changes between positive and negative responders for XRay responses ----------
 # Associations of Δmetabolite levels with the erosion response
@@ -254,7 +253,9 @@ sig_peaks <- distinct(best_adj, Peak_ID, .keep_all = TRUE)
 best_adj_hmdb <- inner_join(best_adj, peak_metadata, by='Peak_ID')
 #best_adj_hmdb <- distinct(best_adj_hmdb, Putative_Metabolite, .keep_all = TRUE)
 best_adj_hmdb<- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='')
-
+sig_peaks <- distinct(best_adj_hmdb, Peak_ID, .keep_all = TRUE)
+sig_peaks$ID <- sig_peaks$Peak_ID
+best_adj_hmdb <- subset(best_adj_hmdb,best_adj_hmdb$Peak_ID != '168')
 ggplot(best_adj_hmdb,aes(x = MRI_Synovitis, y=Peak_Intensity)) +
   geom_point() + 
   stat_cor(method = "spearman", 
@@ -324,21 +325,25 @@ best_adj_hmdb <- inner_join(best_adj, peak_metadata, by='Peak_ID')
 #best_adj_hmdb <- distinct(best_adj_hmdb, Putative_Metabolite, .keep_all = TRUE)
 best_adj_hmdb<- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='')
 best_adj_hmdb <- subset(best_adj_hmdb,best_adj_hmdb$Putative_Metabolite!= 'Pyroglutamic acid')
+sig_dist <- distinct(best_adj_hmdb, Peak_ID, .keep_all = TRUE)
+sig_dist$ID <- sig_dist$Peak_ID
 
-ggplot(best_adj_hmdb,aes(x = MRI_Synovitis, y=Peak_Intensity)) +
-  geom_point() + 
-  stat_cor(method = "pearson", 
-           vjust=1, hjust=0.1,
-           size=4)+
-  geom_line(aes(y = .fitted), color = "red") +
-  facet_wrap(~Putative_Metabolite, scales = "free_y")+
+best_adj_hmdb%>%
+  ggplot(aes(x = MRI_Synovitis, y=Peak_Intensity)) +
+  geom_point(size=0.5, alpha=0.7) + 
+  geom_smooth(method='lm',
+              colour='red')+
   theme(strip.background = element_rect(fill='white', 
                                         size=1.5),
         strip.text.x= element_text(face = "bold.italic",
                                    size=12))+
-  
+  facet_wrap(~Putative_Metabolite, scales = "free_y")+
+  stat_cor(method = "pearson", 
+           vjust=1, hjust=0,
+           size=3)+
   labs(x='ΔMRI Synovitis',
-       y='ΔPeak Intensity')+
+       y='Peak Intensity',
+       title='Positive Ion Mode')+
   theme_minimal()
 
 ### Machine learning- feature selection
@@ -350,7 +355,7 @@ resp_mri_lr <- as.data.frame(t(resp_mri_lr))
 resp_mri_lr$Peak_ID <- rownames(resp_mri_lr)
 resp_mri_lr$Peak_ID <- gsub('X', '', resp_mri_lr$Peak_ID)
 #resp_mri_sel <- subset(resp_mri_lr, resp_mri_lr$Peak_ID %in% toptable_sig$Peak_ID)
-resp_mri_matrix <- resp_mri_sel[,-40]
+resp_mri_matrix <- resp_mri_lr[,-40]
 resp_mri_matrix <- as.data.frame(t(resp_mri_matrix))
 resp_mri_matrix$Response <- resp_ints_mri$Synovitis_Response
 resp_mri_matrix_2 <- resp_mri_matrix
@@ -358,14 +363,22 @@ resp_mri_matrix$Response[resp_mri_matrix$Response %like% 'Positive'] <- 1
 resp_mri_matrix$Response[resp_mri_matrix$Response %like% 'Negative'] <- 0
 resp_mri_matrix$Response <- as.numeric(resp_mri_matrix$Response)
 
+write.csv(resp_mri_matrix, '20210218_AF_pos_syno.csv')
+
+
 set.seed(42)
-index <- createDataPartition(resp_mri_matrix$Response, p = 0.8, list = FALSE) # 0.8
+index <- createDataPartition(resp_mri_matrix$Response, p = 0.75, list = FALSE) # 0.8
 train_data <- resp_mri_matrix[index, ]
 test_data  <- resp_mri_matrix[-index, ]
 
-model <- glm(Response ~.,family=binomial(link='logit'),data=train_data)
+model <- glm(Response ~ X396 + X873 + X359,
+             family=binomial(link='logit'),
+             data=train_data)
 summary(model)
 anova(model, test="Chisq")
+
+1-pchisq(43.860-35.428, 31-26)
+
 pR2(model)
 fitted.results <- predict(model,newdata=test_data,type='response')
 fitted.results <- ifelse(fitted.results > 0.5,1,0)
@@ -382,31 +395,29 @@ auc
 
 ## Attempt rf feature selection
 set.seed(42)
-index <- createDataPartition(resp_mri_matrix_2$Response, p = 0.8, list = FALSE) # 0.8
+index <- createDataPartition(resp_mri_matrix_2$Response, p = 0.85, list = FALSE) # 0.8
 train_data <- resp_mri_matrix_2[index, ]
 test_data  <- resp_mri_matrix_2[-index, ]
 tuneGrid <- expand.grid(.mtry = c(1:sqrt(1458)))
 cores <- makeCluster(detectCores()-1)
 registerDoParallel(cores = cores)
 set.seed(42)
+
 model_rf <- train(Response~.,
                           data = train_data,
                           method = "rf",
                           metric = "Accuracy",
                           tuneGrid=tuneGrid,
                           trControl = trainControl(method = "repeatedcv",
-                                                   number =10,
-                                                   repeats = 5, 
+                                                   number =3,
+                                                   repeats = 3, 
                                                    savePredictions = TRUE, 
                                                    verboseIter = FALSE, 
                                                    allowParallel = TRUE),
                           importance = TRUE,
                           ntree = 500)
 
-summary(model_rf)
 plot(model_rf)
-stopCluster(cores)
-
 test_results <- predict(model_rf, newdata = test_data)
 summary(test_results)
 test_data$Response <- as.factor(test_data$Response)
@@ -431,7 +442,7 @@ imps <- as.data.frame(imp_peaks$importance)
 imps$Peak_ID <- rownames(imps)
 imps <- imps[,-1]
 colnames(imps)[1] <- 'Importance'
-imps <- subset(imps,imps$Importance >20)
+imps <- subset(imps,imps$Importance >50)
 imps$Peak_ID <- gsub('X','', imps$Peak_ID)
 imps$Peak_ID <- as.numeric(imps$Peak_ID)
 
@@ -439,6 +450,7 @@ imps_hmdb <- inner_join(imps, peak_metadata, by='Peak_ID')
 imps_hmdb <- with(imps_hmdb,imps_hmdb[order(Importance),])
 imps_hmdb_id <- subset(imps_hmdb, imps_hmdb$Putative_Metabolite !='NA')
 imps_hmdb_id <- distinct(imps_hmdb_id, Putative_Metabolite, .keep_all = TRUE)
+imps_hmdb_id[7,9] <- 'Pyroglutamate'
 imps_hmdb_id$Putative_Metabolite <- as.factor(imps_hmdb_id$Putative_Metabolite)
 
 # Plot the annotated peaks from feature importance

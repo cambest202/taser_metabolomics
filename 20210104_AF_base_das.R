@@ -65,7 +65,7 @@ resp_ints <- read.csv('20201105_resp_ints.csv', header=TRUE)
 resp_diff <- read.csv('20201105_resp_diff.csv', header=TRUE)
 peak_IDs <- read.table (file="20200117_Taser_PeakIDs.csv", header=TRUE, row.names=1, sep= "\t")
 peak_ID_HMDB <- read.csv(file='peak_IDs_HMDB.csv', header=TRUE, row.names=1)
-peak_metadata <- read.csv(file='20200427_Taser_PeakMetadata.csv', header=TRUE, row.names=1)
+peak_metadata <- read.csv(file='20210217_neg_peak_metadata.csv', header=TRUE)
 
 sample_sheet = read.table (file="20200318_Taser_SampleSheet.csv", header=TRUE, row.names=1)
 patient_metadata <- read.csv(file='20190713_Taser_PatientMetadata.csv', header=TRUE, row.names=1)
@@ -75,7 +75,6 @@ names(sample_sheet)[2] <- 'Sample_Name'
 peak_IDs$Peak_ID <- rownames(peak_IDs)
 peak_IDs$Peak_ID  <- as.numeric(peak_IDs$Peak_ID )
 peak_IDs$moleculeName  <- as.character(peak_IDs$moleculeName )
-colnames(peak_metadata)[6] <- 'Peak_ID'
 peak_metadata <- left_join(peak_metadata, peak_IDs, by='Peak_ID')
 names(sample_sheet)[2] <- 'Sample_Name'
 
@@ -138,7 +137,7 @@ limma_fun <- function(matrix_AB, no., var1, var2){
 AF_limma <- limma_fun(resp_differential_t, 1500, 'Negative', 'Positive')
 AF_limma$Sig <- 0
 AF_limma$Sig <- ifelse(AF_limma$adj.P.Val <0.05, 'Significant', 'Not Significant') 
-AF_limma$Sig_Peaks <- ifelse(AF_limma$P.Value<0.01 & AF_limma$identification != '', AF_limma$Peak_ID, '')
+AF_limma$Sig_Peaks <- ifelse(AF_limma$P.Value<0.05 & AF_limma$identification != '', AF_limma$Peak_ID, '')
 
 AF_limma_hmdb <- inner_join(AF_limma, peak_ID_HMDB, by='Peak_ID')
 AF_limma_hmdb$Sig_Peaks <- ifelse(AF_limma_hmdb$P.Value<0.05, AF_limma_hmdb$Putative_Metabolite, '')
@@ -213,7 +212,8 @@ set.seed(42)
 index <- createDataPartition(resp_subset$Response, p = 0.7, list = FALSE)
 train_data <- resp_subset[index, ]
 test_data  <- resp_subset[-index, ]
-
+cores <- makeCluster(detectCores()-1)
+registerDoParallel(cores = cores)
 tuneGrid <- expand.grid(.mtry = c(1:sqrt(1458)))
 set.seed(42)
 model_rf <- caret::train(Response~.,
@@ -228,7 +228,7 @@ model_rf <- caret::train(Response~.,
                                                   verboseIter = FALSE, 
                                                   allowParallel = TRUE),
                          importance = TRUE,
-                         ntree = 300)
+                         ntree = 500)
 
 
 
@@ -258,7 +258,7 @@ imps <- as.data.frame(imp_peaks$importance)
 imps$Peak_ID <- rownames(imps)
 imps <- imps[,-1]
 colnames(imps)[1] <- 'Importance'
-imps <- subset(imps,imps$Importance >30)
+imps <- subset(imps,imps$Importance >55)
 imps$Peak_ID <- gsub('X','', imps$Peak_ID)
 imps$Peak_ID <- as.numeric(imps$Peak_ID)
 
@@ -268,8 +268,8 @@ imps_hmdb_id <- subset(imps_hmdb, imps_hmdb$Putative_Metabolite !='NA')
 imps_hmdb_id <- distinct(imps_hmdb_id, Putative_Metabolite, .keep_all = TRUE)
 imps_hmdb_id$Putative_Metabolite <- as.factor(imps_hmdb_id$Putative_Metabolite)
 
-write.csv(imps_hmdb_id, '20210114_AF_base_das_FI.csv')
-imps_hmdb_id <- read.csv('20210114_AF_base_das_FI.csv')
+#write.csv(imps_hmdb_id, '20210114_AF_base_das_FI.csv')
+#imps_hmdb_id <- read.csv('20210114_AF_base_das_FI.csv')
 
 # Plot the annotated peaks from feature importance
 ggplot(imps_hmdb_id)+
@@ -285,7 +285,7 @@ ggplot(imps_hmdb_id)+
 
 ### Build linear models for the top peaks from feature selection for each of the disease measurements
 # DAS44 ------
-resp_melt_top <- subset(resp_A_melt, resp_A_melt$Peak_ID %in% imps_hmdb_id$Peak_ID)
+resp_melt_top <- resp_A_melt
 
 ints_nested <- resp_melt_top %>%
   group_by (Peak_ID) %>%
@@ -312,10 +312,10 @@ top_50_peaks <- head(bestest_fit, 50)
 top_100_peaks <- head(bestest_fit, 100)
 top_200_peaks <- head(bestest_fit, 200)
 
-best_augmented <- top_200_peaks %>% 
+best_augmented <- bestest_fit %>% 
   mutate(augmented = map(model, ~augment(.x))) %>% 
   unnest(augmented)
-best_augmented_sig <- subset(best_augmented, best_augmented$p.value< 0.05)
+best_augmented_sig <- subset(best_augmented, best_augmented$p.value< 0.5)
 best_augmented_sig$Peak_ID <- as.numeric(best_augmented_sig$Peak_ID)
 adj_p <- p.adjust(best_augmented_sig$p.value, method='BH')
 best_augmented_sig$adj_p <- adj_p
@@ -323,8 +323,8 @@ best_augmented$Peak_ID <- as.numeric(best_augmented$Peak_ID)
 best_hmdb <- inner_join(best_augmented, peak_ID_HMDB, by='Peak_ID')
 best_hmdb <- subset(best_hmdb, best_hmdb$Putative_Metabolite != 'NA')
 
-best_adj <- subset(best_augmented_sig, best_augmented_sig$adj_p < 0.05) 
-best_adj_hmdb <- inner_join(best_adj, peak_ID_HMDB, by='Peak_ID')
+best_adj <- subset(best_augmented_sig, best_augmented_sig$adj_p < 0.5) 
+best_adj_hmdb <- inner_join(best_adj, peak_metadata, by='Peak_ID')
 best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='NA')
 best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite != 'Citrate')
 
@@ -333,19 +333,20 @@ sig_peaks <- distinct(sig_peaks, HMDB, .keep_all = TRUE)
 
 best_adj_hmdb <- subset(best_adj_hmdb,best_adj_hmdb$Peak_ID %in% sig_peaks$Peak_ID)
 
-ggplot(best_adj_hmdb,aes(x = DAS44, y=Peak_Intensity)) +
-  geom_point() + 
-  stat_cor(method = "spearman", 
-           vjust=1, hjust=0.1,
-           size=4)+
-  geom_line(aes(y = .fitted), color = "red") +
+best_adj_hmdb%>%
+ggplot(aes(x = DAS44, y=Peak_Intensity)) +
+  geom_point(size=0.5, alpha=0.7) + 
+ 
+  geom_smooth(method='lm',
+              colour='red')+
   facet_wrap(~Putative_Metabolite, scales = "free_y")+
-  theme(strip.background = element_rect(fill='white', 
+    theme(strip.background = element_rect(fill='white', 
                                         size=1.5),
         strip.text.x= element_text(face = "bold.italic",
-                                   size=12))+
+                                   size=8))+
   labs(x='ΔDAS44',
-       y='ΔPeak Intensity')+
+       y='Peak Intensity',
+       title='Negative Ion Mode')+
   theme_minimal()
 
 resp_melt_samples <- subset(resp_melt_top, resp_melt_top$Peak_ID %in% best_adj_hmdb$Peak_ID)
@@ -990,17 +991,20 @@ resp_int_strict_melt %>%
   labs(y='Peak Intensity')
 
 #### Using logistic regression for prediction of patient outcomes. 
-resp_int_lr <- resp_int_strict_t
-resp_int_lr$Response[resp_int_lr$Response=='Positive'] <- 1
-resp_int_lr$Response[resp_int_lr$Response=='Negative'] <- 0
-resp_int_lr$Response <- as.factor(resp_int_lr$Response)
+resp_int_2 <- resp_int
+resp_int_2$Response[resp_int_2$Response=='Positive'] <- 1
+resp_int_2$Response[resp_int_2$Response=='Negative'] <- 0
+resp_int_2$Response <- as.factor(resp_int_2$Response)
+
+#write.csv(resp_int_2, '20210218_AF_neg_LGR_matrix') 
 
 set.seed(42)
-index <- createDataPartition(resp_int_lr$Response, p = 0.8, list = FALSE)
-train_data <- resp_int_lr[index, ]
-test_data  <- resp_int_lr[-index, ]
+index <- createDataPartition(resp_int_2$Response, p = 0.65, list = FALSE)
+train_data <- resp_int_2[index, ]
+test_data  <- resp_int_2[-index, ]
 
-model <- glm(Response ~.,family=binomial(link='logit'),data=train_data)
+model <- glm(Response ~ X243 + X189 + X182 + X172 + X351 + X1028,
+             family=binomial(link='logit'),data=train_data)
 summary(model)
 anova(model, test="Chisq")
 
@@ -1022,7 +1026,9 @@ auc <- auc@y.values[[1]]
 auc
 
 # Repeat using fewer variables. Do this to avoid overfitting, selecting only the most significant
-model <- glm(Response ~ X115 + X270 + X642 + X1191 + X1361,family=binomial(link='logit'),data=train_data)
+model <- glm(Response ~ X115 + X270 + X642 + X1191 + X1361,
+             family=binomial(link='logit'),
+             data=train_data)
 summary(model)
 confint(model)
 anova(model, test="Chisq") # check the overall effect of the variables on the dependent variable
