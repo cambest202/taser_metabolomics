@@ -222,6 +222,8 @@ good_p_hmdb <- inner_join(good_augmented_sig, peak_metadata_dist, by='Peak_ID')
 
 best_adj_hmdb_dist <- distinct(best_adj_hmdb, Putative_Metabolite, .keep_all = TRUE)
 good_p_hmdb_dist <- distinct(good_p_hmdb, Putative_Metabolite, .keep_all = TRUE)
+good_p_hmdb_dist$ID <- good_p_hmdb_dist$Peak_ID
+
 #write.csv(best_adj_hmdb_dist_2, '20210211_AF_base_das_keggs.csv')
 
 plot_aug <- best_adj_hmdb[,c(16,17,31)]

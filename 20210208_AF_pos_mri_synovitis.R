@@ -217,6 +217,11 @@ resp_diff_melt$MRI_Erosion <- resp_diff_mri$ΔMRI_Erosion
 resp_diff_melt$MRI_Synovitis <- resp_diff_mri$ΔMRI_Synovitis
 resp_diff_melt$MRI_Oedema <- resp_diff_mri$ΔMRI_Oedema
 
+resp_diff_melt$Peak_ID_Ion <- paste0('Pos_', resp_diff_melt$Peak_ID)
+resp_diff_melt$Peak_ID <- as.numeric(resp_diff_melt$Peak_ID)
+resp_diff_melt_ID <- inner_join(resp_diff_melt, peak_metadata, by='Peak_ID')
+#write.csv(resp_diff_melt_ID, '20210224_AF_pos_syn_melt.csv')
+
 # MRI Synovitis----
 # make sure all disease measures are included in the melted df
 ints_nested <- resp_diff_melt %>%
@@ -237,30 +242,51 @@ model_perf <- model_perf_nested%>%
   unnest(fit)
 best_fit <- model_perf %>%
   top_n(n=4, wt=r.squared)
-bestest_fit <- with(model_perf,model_perf[order(-r.squared),])
 
-best_augmented <- bestest_fit %>% 
+best_augmented <- best_fit %>% 
   mutate(augmented = map(model, ~augment(.x))) %>% 
   unnest(augmented)
+
+best_augmented_sigish <- subset(best_augmented, best_augmented$p.value< 0.1)
+cor_dist <- distinct(best_augmented_sigish, Peak_ID, .keep_all = TRUE)
+cor_dist_ID <- inner_join(cor_dist, peak_metadata, by='Peak_ID')
+cor_dist_cut <- cor_dist_ID[,c(1,31)]
+cor_dist_cut$Ion_Mode <- 'Pos'
+cor_dist_cut$Putative_Metabolite[cor_dist_cut$Peak_ID == '168'] <- ''
+#write.csv(cor_dist_cut, '20210225_AF_pos_syno_cors.csv')
+
 best_augmented_sig <- subset(best_augmented, best_augmented$p.value< 0.05)
 best_augmented_sig$Peak_ID <- as.numeric(best_augmented_sig$Peak_ID)
 adj_p <- p.adjust(best_augmented_sig$p.value, method='BH')
 best_augmented_sig$adj_p <- adj_p
 
 best_adj <- subset(best_augmented_sig, best_augmented_sig$adj_p < 0.05) 
+good_p <- best_augmented_sig
 sig_peaks <- distinct(best_adj, Peak_ID, .keep_all = TRUE)
 
 best_adj_hmdb <- inner_join(best_adj, peak_metadata, by='Peak_ID')
+good_p_hmdb <- inner_join(good_p, peak_metadata, by='Peak_ID')
 #best_adj_hmdb <- distinct(best_adj_hmdb, Putative_Metabolite, .keep_all = TRUE)
 best_adj_hmdb<- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='')
+good_p_hmdb <- subset(good_p_hmdb, good_p_hmdb$Putative_Metabolite !='')
+
 sig_peaks <- distinct(best_adj_hmdb, Peak_ID, .keep_all = TRUE)
 sig_peaks$ID <- sig_peaks$Peak_ID
+
+good_peaks <- distinct(good_p_hmdb, Peak_ID, .keep_all = TRUE)
+
 best_adj_hmdb <- subset(best_adj_hmdb,best_adj_hmdb$Peak_ID != '168')
-ggplot(best_adj_hmdb,aes(x = MRI_Synovitis, y=Peak_Intensity)) +
-  geom_point() + 
-  stat_cor(method = "spearman", 
-           vjust=1, hjust=0.1,
-           size=4)+
+
+best_adj_hmdb_dist <- distinct(best_adj_hmdb, Putative_Metabolite, .keep_all = TRUE)
+
+best_adj_hmdb%>%
+  ggplot(aes(x = MRI_Synovitis, y=Peak_Intensity)) +
+  geom_point(size=0.5, alpha=0.7) + 
+  stat_cor(method = "pearson", 
+           vjust=1, hjust=0,
+           size=3)+
+  geom_smooth(method='lm',
+              colour='red')+
   geom_line(aes(y = .fitted), color = "red") +
   facet_wrap(~Putative_Metabolite, scales = "free_y")+
   theme(strip.background = element_rect(fill='white', 
@@ -268,7 +294,7 @@ ggplot(best_adj_hmdb,aes(x = MRI_Synovitis, y=Peak_Intensity)) +
         strip.text.x= element_text(face = "bold.italic",
                                    size=12))+
   
-  labs(x='ΔMRI Synovitis',
+  labs(x='ΔSynovitis',
        y='ΔPeak Intensity')+
   theme_minimal()
 
@@ -346,24 +372,15 @@ best_adj_hmdb%>%
        title='Positive Ion Mode')+
   theme_minimal()
 
-### Machine learning- feature selection
-toptable_sig <- subset(toptable, toptable$Sig_Peaks != '')
+### Logistic regression
+resp_LRM <- resp_diff[,c(11,13:1596)]
+names(resp_LRM)[2:1585] <- paste0('Pos_', names(resp_LRM)[2:1585])
+names(resp_LRM)[1] <- 'Response'
+resp_LRM$Response[resp_LRM$Response == 'Good' |resp_LRM$Response == 'Remission'] <- 1
+resp_LRM$Response[resp_LRM$Response == 'Mild' |resp_LRM$Response == 'Poor'] <- 0
+resp_LRM$Response<- as.factor(resp_LRM$Response)
 
-resp_mri <- resp_ints_mri[,c(5,16:1599)]
-resp_mri_lr <- resp_mri[,-1]
-resp_mri_lr <- as.data.frame(t(resp_mri_lr))
-resp_mri_lr$Peak_ID <- rownames(resp_mri_lr)
-resp_mri_lr$Peak_ID <- gsub('X', '', resp_mri_lr$Peak_ID)
-#resp_mri_sel <- subset(resp_mri_lr, resp_mri_lr$Peak_ID %in% toptable_sig$Peak_ID)
-resp_mri_matrix <- resp_mri_lr[,-40]
-resp_mri_matrix <- as.data.frame(t(resp_mri_matrix))
-resp_mri_matrix$Response <- resp_ints_mri$Synovitis_Response
-resp_mri_matrix_2 <- resp_mri_matrix
-resp_mri_matrix$Response[resp_mri_matrix$Response %like% 'Positive'] <- 1
-resp_mri_matrix$Response[resp_mri_matrix$Response %like% 'Negative'] <- 0
-resp_mri_matrix$Response <- as.numeric(resp_mri_matrix$Response)
-
-write.csv(resp_mri_matrix, '20210218_AF_pos_syno.csv')
+write.csv(resp_LRM, '20210223_AF_pos_syno_resp.csv')
 
 
 set.seed(42)

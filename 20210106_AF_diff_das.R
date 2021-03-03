@@ -76,6 +76,8 @@ peak_ID_HMDB$Putative_Metabolite <- ifelse(peak_ID_HMDB$Putative_Metabolite == '
 peak_ID_HMDB$Putative_Metabolite <- ifelse(peak_ID_HMDB$Putative_Metabolite == 'LysoPE', paste0(peak_ID_HMDB$Putative_Metabolite,'?'),peak_ID_HMDB$Putative_Metabolite)
 peak_ID_HMDB$Putative_Metabolite <- ifelse(peak_ID_HMDB$Putative_Metabolite == 'PI', paste0(peak_ID_HMDB$Putative_Metabolite,'?'),peak_ID_HMDB$Putative_Metabolite)
 peak_ID_HMDB$Putative_Metabolite <- ifelse(peak_ID_HMDB$Putative_Metabolite == 'PI', paste0(peak_ID_HMDB$Putative_Metabolite,'?'),peak_ID_HMDB$Putative_Metabolite)
+peak_ID_HMDB$Putative_Metabolite <- ifelse(peak_ID_HMDB$Putative_Metabolite == 'Testosterone sulfate', paste0(peak_ID_HMDB$Putative_Metabolite,'DHEA sulfate?'),peak_ID_HMDB$Putative_Metabolite)
+peak_ID_HMDB$Putative_Metabolite <- ifelse(peak_ID_HMDB$Putative_Metabolite == 'Ribonic acid', paste0(peak_ID_HMDB$Putative_Metabolite,'Ribonic acid?'),peak_ID_HMDB$Putative_Metabolite)
 
 
 sample_sheet = read.table (file="20200318_Taser_SampleSheet.csv", header=TRUE, row.names=1)
@@ -87,8 +89,6 @@ peak_IDs$Peak_ID  <- as.numeric(peak_IDs$Peak_ID )
 peak_IDs$moleculeName  <- as.character(peak_IDs$moleculeName )
 names(sample_sheet)[2] <- 'Sample_Name'
 
-peak_metadata_IDs <- subset(peak_metadata, peak_metadata$identification != '')
-peak_metadata$Peak_ID_test <- peak_metadata$Peak_ID
 
 # Which metabolites over the 18 months are associated with the DAS44 clinical outcome after 18 months of treatment?
 resp_diff_melt <- resp_diff[,c(13:1471)]
@@ -141,7 +141,6 @@ limma_fun <- function(matrix_AB, no., var1, var2){
   toptable$Peak_ID <- as.numeric(as.character(toptable$Peak_ID))
   toptable <- toptable[,c(ncol(toptable),1:(ncol(toptable)-1))]
   toptable <- join(toptable, peak_metadata, by = 'Peak_ID')
-  toptable <- toptable[, -c(3,4,7,10:12)]
 }
 
 AF_limma <- limma_fun(resp_differential_t, 1500, 'A', 'F')
@@ -156,14 +155,14 @@ only_mets <- c(1199, 738,196,947,74,162)
 AF_limma_hmdb <- AF_limma
 AF_limma_hmdb$Sig_Peaks <-0
 #AF_limma_hmdb$Sig_Peaks <- ifelse(AF_limma_hmdb$Peak_ID %in% only_mets,AF_limma_hmdb$Putative_Metabolite, '')
-AF_limma_hmdb$Sig_Peaks <- ifelse(AF_limma_hmdb$adj.P.Val <0.05 & AF_limma_hmdb$identification.x != '', AF_limma_hmdb$Putative_Metabolite, '')
+AF_limma_hmdb$Sig_Peaks <- ifelse(AF_limma_hmdb$adj.P.Val <0.05 & AF_limma_hmdb$identification != '', AF_limma_hmdb$Putative_Metabolite, '')
 
 AF_limma_hmdb_sig <- subset(AF_limma_hmdb,AF_limma_hmdb$adj.P.Val < 0.05)
 AF_limma_hmdb_dist <- distinct(AF_limma_hmdb, Putative_Metabolite, .keep_all = TRUE)
 
 AF_limma_hmdb_dist$Sig <- as.factor(AF_limma_hmdb_dist$Sig)
 AF_limma_hmdb_dist$Peak_ID_2 <- AF_limma_hmdb_dist$Peak_ID
-write.csv(AF_limma_hmdb_dist, '20210218_AF_neg_diff.csv')
+#write.csv(AF_limma_hmdb_dist, '20210218_AF_neg_diff.csv')
 
 AF_limma_hmdb_dist%>%
 ggplot(aes(x=logFC, y=-log10(P.Value), 
@@ -183,9 +182,7 @@ ggplot(aes(x=logFC, y=-log10(P.Value),
                   arrow = arrow(length = unit(0.005, "npc"))) +  
   theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
         axis.title = element_text(size = rel(1.25)))+
-  scale_color_brewer(palette = "Set1",direction=-1)+
-  ylim(0,4)+
-  xlim(-1.5,1.5)
+  scale_color_brewer(palette = "Set1",direction=-1)
 
 # Histogram of p-values 
 alpha <- binw <- 0.05 #where α = 0.05
@@ -323,26 +320,25 @@ model_rf <- caret::train(Response~.,
                          metric = "Accuracy",
                          tuneGrid=tunegrid,
                          trControl = trainControl(method = "repeatedcv",
-                                                  number =10,
+                                                  number =5,
                                                   repeats = 5, 
                                                   savePredictions = TRUE, 
                                                   verboseIter = FALSE, 
                                                   allowParallel = TRUE),
                          importance = TRUE,
-                         ntree = 500)
+                         ntree = 450)
 
-summary(custom)
+summary(model_rf)
 
-plot(custom)
-stopCluster(cores)
+plot(model_rf)
 
 test_results <- predict(model_rf, newdata = test_data)
 summary(test_results)
 summary(test_data$Response)
 confusionMatrix(test_results, test_data$Response)
 
-final <- data.frame(actual = test_data$DAS44_Response,
-                    predict(custom, newdata = test_data, type = "prob"))
+final <- data.frame(actual = test_data$Response,
+                    predict(model_rf, newdata = test_data, type = "prob"))
 final$predicted <- 0
 final$predicted[final$Positive > final$Negative] <- 'Positive'
 final$predicted[final$Positive < final$Negative] <- 'Negative'
@@ -350,20 +346,20 @@ final$correct <- 0
 final$correct <- ifelse(final$predict == final$actual, 'Correct', 'Incorrect')
 summary(final$predicted == final$actual)
 
-imp <- custom$finalModel$importance
+imp <- model_rf$finalModel$importance
 imp <- as.data.frame(imp)
 imp <- imp[order(imp$MeanDecreaseAccuracy, decreasing = TRUE), ]
-imp_peaks <- varImp(custom, scale = TRUE)
+imp_peaks <- varImp(model_rf, scale = TRUE)
 plot(imp_peaks, top=20)
 imps <- as.data.frame(imp_peaks$importance)
 imps$Peak_ID <- rownames(imps)
 imps <- imps[,-1]
 colnames(imps)[1] <- 'Importance'
-imps <- subset(imps,imps$Importance >20)
-imps$Peak_ID <- gsub('`','', imps$Peak_ID)
+imps <- subset(imps,imps$Importance >40)
+imps$Peak_ID <- gsub('X','', imps$Peak_ID)
 imps$Peak_ID <- as.numeric(imps$Peak_ID)
 
-imps_hmdb <- inner_join(imps, peak_ID_HMDB, by='Peak_ID')
+imps_hmdb <- inner_join(imps, peak_metadata, by='Peak_ID')
 imps_hmdb <- with(imps_hmdb,imps_hmdb[order(Importance),])
 imps_hmdb_id <- subset(imps_hmdb, imps_hmdb$Putative_Metabolite !='NA')
 imps_hmdb_id <- distinct(imps_hmdb_id, Putative_Metabolite, .keep_all = TRUE)
@@ -372,7 +368,7 @@ imps_hmdb_id$Putative_Metabolite <- as.factor(imps_hmdb_id$Putative_Metabolite)
 #write.csv(imps_hmdb_id, '20210111_AF_diff_das_FI_metabolites.csv')
 
 # Plot the annotated peaks from feature importance
-imps_hmdb_id <- read.csv('20210111_AF_diff_das_FI_metabolites.csv')
+#imps_hmdb_id <- read.csv('20210111_AF_diff_das_FI_metabolites.csv')
 ggplot(imps_hmdb_id)+
   geom_col(aes(reorder(Putative_Metabolite, Importance), 
                Importance),
@@ -389,13 +385,19 @@ ggplot(imps_hmdb_id)+
 # DAS44----
 resp_melt_top <- subset(resp_diff_melt, resp_diff_melt$Peak_ID %in% peak_ID_HMDB$Peak_ID)
 # make sure all disease measures are included in the melted df
+par(mfrow=c(1,3)) 
+
 resp_melt_top%>%
-  subset(Peak_ID =='74')%>%
+  subset(Peak_ID =='406')%>%
   ggplot(aes(y=Peak_Intensity, x=DAS44))+
   geom_point()+
   theme_light()+
   geom_smooth(method='lm')+
-  stat_cor()
+  stat_cor()+
+  labs(x='ΔDAS44', 
+       y='ΔPeak Intensity',
+       title='Creatine')
+
 
 
 ints_nested <- resp_melt_top %>%
@@ -423,16 +425,27 @@ identical(resp_diff_melt, ints_unnested)
   top_100_peaks <- head(bestest_fit, 100)
   top_200_peaks <- head(bestest_fit, 200)
   
-  best_augmented <- top_200_peaks %>% 
+  best_augmented <- bestest_fit %>% 
     mutate(augmented = map(model, ~augment(.x))) %>% 
     unnest(augmented)
   best_augmented_sig <- subset(best_augmented, best_augmented$p.value< 0.05)
+  best_augmented_sigish <- subset(best_augmented, best_augmented$p.value< 0.2)
+  
+  cor_dist <- distinct(best_augmented_sigish, Peak_ID, .keep_all = TRUE)
+  cor_dist$Peak_ID <- as.numeric(cor_dist$Peak_ID)
+  cor_dist_ID <- inner_join(cor_dist, peak_metadata, by='Peak_ID')
+  cor_dist_cut <- cor_dist_ID[,c(1,27)]
+  cor_dist_cut$Ion_Mode <- 'Neg'
+  cor_dist_cut$Putative_Metabolite[cor_dist_cut$Peak_ID == '173'] <- ''
+  
+ # write.csv(cor_dist_cut, '20210225_AF_neg_das_cors.csv')
+  
   best_augmented_sig$Peak_ID <- as.numeric(best_augmented_sig$Peak_ID)
   adj_p <- p.adjust(best_augmented_sig$p.value, method='BH')
   best_augmented_sig$adj_p <- adj_p
 
 best_adj <- subset(best_augmented_sig, best_augmented_sig$adj_p < 0.05) 
-best_adj_hmdb <- inner_join(best_adj, peak_ID_HMDB, by='Peak_ID')
+best_adj_hmdb <- inner_join(best_adj, peak_metadata, by='Peak_ID')
 best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='NA')
 sig_peaks <- distinct(best_adj_hmdb, Peak_ID, .keep_all = TRUE)
 sig_peaks$ID <- sig_peaks$Peak_ID
@@ -440,11 +453,19 @@ DAS_metabolites <- best_adj_hmdb
 colnames(DAS_metabolites)[17] <-'Disease_Measure'
 DAS_metabolites$Disease_Measure_Type <- 'DAS44'
 
-ggplot(best_adj_hmdb,aes(x = DAS44, y=Peak_Intensity)) +
-  geom_point() + 
+best_adj_hmdb_dist  <- distinct(best_adj_hmdb, Putative_Metabolite, .keep_all = TRUE)
+best_adj_hmdb_dist$ID <- best_adj_hmdb_dist$Peak_ID
+
+sound <- c(692,711,964,1028)
+best_adj_hmdb %>%
+  subset(Peak_ID %in% sound)%>%
+ggplot(aes(x = DAS44, y=Peak_Intensity)) +
+  geom_point(size=1, alpha=0.7) + 
   stat_cor(method = "spearman", 
-           vjust=1, hjust=0.1,
-           size=4)+
+           vjust=1, hjust=0,
+           size=3)+
+    geom_smooth(method='lm',
+              colour='red')+
   geom_line(aes(y = .fitted), color = "red") +
   facet_wrap(~Putative_Metabolite, scales = "free_y")+
   theme(strip.background = element_rect(fill='white', 
@@ -453,7 +474,8 @@ ggplot(best_adj_hmdb,aes(x = DAS44, y=Peak_Intensity)) +
                                    size=12))+
   
   labs(x='ΔDAS44',
-       y='ΔPeak Intensity')+
+       y='ΔPeak Intensity',
+       title='Negative Ion Mode')+
   theme_minimal()
 
 # CRP----
@@ -1410,40 +1432,22 @@ resp_ints_stats_hmdb_padj %>%
   labs(y='Peak Intensity')
 
 #### Using logistic regression for prediction of patient outcomes. 
-resp_int_lr <- resp_diff_ML_2
+resp_LRM <- resp_diff[,c(11,14:1471)]
+names(resp_LRM)[2:1459] <- paste0('Neg_', names(resp_LRM)[2:1459])
+names(resp_LRM)[1] <- 'Response'
+resp_LRM$Response[resp_LRM$Response == 'Good' |resp_LRM$Response == 'Remission'] <- 1
+resp_LRM$Response[resp_LRM$Response == 'Mild' |resp_LRM$Response == 'Poor'] <- 0
+resp_LRM$Response<- as.factor(resp_LRM$Response)
 
-das_peaks <- c("L-Glutamate", "Hypoxanthine", "L-Valine", "Uridine", "L-Ornithine",
-               "Creatinine", "Orotate" ,  "N-Acetylornithine")
-das_strict <- c("L-Glutamate", "Hypoxanthine", "L-Histidine", "L-Valine", "Traumatic acid", 'Orotate', "N-Acetylornithine")
-
-peaks_das <- subset(peak_ID_HMDB, peak_ID_HMDB$Putative_Metabolite %in% das_strict)
-
-AF_refined <- subset(AF_limma_hmdb, AF_limma_hmdb$adj.P.Val < 0.01)
-AF_refined <- subset(AF_refined, AF_refined$Putative_Metabolite != 'NA')
-AF_refined <- distinct(AF_refined, Putative_Metabolite, .keep_all = TRUE)
-
-resp_lr <- resp_int_lr[,-1]
-resp_lr_t <- as.data.frame(t(resp_lr))
-resp_lr_t$Peak_ID <- rownames(resp_lr_t)
-resp_lr_sel <- subset(resp_lr_t, resp_lr_t$Peak_ID %in% peaks_das$Peak_ID)
-resp_lr_sel_t <- resp_lr_sel[,-64]
-resp_lr_sel_t <- as.data.frame(t(resp_lr_sel_t))
-resp_lr_mets<- resp_lr_sel_t
-resp_lr_mets$Response <- resp_int_lr$DAS44_Response
-resp_lr_mets <- resp_lr_mets[,c(ncol(resp_lr_mets),1:(ncol(resp_lr_mets)-1))]
-
-resp_lr_mets$Response <- as.character(resp_lr_mets$Response)
-resp_lr_mets$Response[resp_lr_mets$Response=='Positive'] <- 1
-resp_lr_mets$Response[resp_lr_mets$Response=='Negative'] <- 0
-resp_lr_mets$Response <- as.numeric(resp_lr_mets$Response)
-names(resp_lr_mets)[2:13] <- paste0('X', names(resp_lr_mets)[2:13])
+write.csv(resp_LRM, '20210223_AF_neg_das_resp.csv')
 
 set.seed(42)
-index <- createDataPartition(resp_lr_mets$Response, p = 0.85, list = FALSE) # 0.8
-train_data <- resp_lr_mets[index, ]
-test_data  <- resp_lr_mets[-index, ]
+index <- createDataPartition(resp_LRM$Response, p = 0.85, list = FALSE) # 0.8
+train_data <- resp_LRM[index, ]
+test_data  <- resp_LRM[-index, ]
 
-model <- glm(Response ~.,family=binomial(link='logit'),data=train_data)
+
+model <- glm(Response ~ X169 + X,family=binomial(link='logit'),data=train_data)
 summary(model)
 anova(model, test="Chisq")
 
@@ -1501,3 +1505,14 @@ auc <- auc@y.values[[1]]
 auc # higher the score, the better the model
  
 
+### Correlating purine metabolites with DAS44
+
+resp_diff%>%
+  ggplot(aes(y=X74, x=DAS44))+
+  geom_point()+
+  theme_light()+
+  geom_smooth(method='lm',
+              colour='red')+
+  stat_cor()+
+  labs(x='ΔDAS44',
+       y='ΔHypoxanthine')

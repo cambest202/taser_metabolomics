@@ -96,6 +96,9 @@ mri_melt <- mri_resp[,c(1,17:1474)]
 mri_melt <- melt(mri_melt)
 mri_melt$DAS44 <- mri_resp$DAS44
 mri_melt$MRI_Erosion <- mri_resp$ΔMRI_Erosion
+mri_melt$MRI_Synovitis <- mri_resp$ΔMRI_Synovitis
+mri_melt$MRI_Oedema <- mri_resp$ΔMRI_Oedema
+
 mri_melt$CRP <- mri_resp$CRP
 mri_melt$ESR <- mri_resp$ESR
 mri_melt$HAQ <- mri_resp$HAQ

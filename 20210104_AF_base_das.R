@@ -58,6 +58,9 @@ library(e1071)
 library(ggraph)
 library(igraph)
 
+
+`%notin%` <- Negate(`%in%`)
+
 setwd('/Users/cameronbest/University/MRC_DTP_in_Precision_Medicine/Project/RA/Taser_data/Analysis/taser_metabolomics')
 
 ### files------
@@ -315,7 +318,11 @@ top_200_peaks <- head(bestest_fit, 200)
 best_augmented <- bestest_fit %>% 
   mutate(augmented = map(model, ~augment(.x))) %>% 
   unnest(augmented)
-best_augmented_sig <- subset(best_augmented, best_augmented$p.value< 0.5)
+best_augmented_sig <- subset(best_augmented, best_augmented$p.value< 0.05)
+bad_adj <- subset(best_augmented, best_augmented$p.value > 0.5) 
+bad_adj$Peak_ID <- as.numeric(bad_adj$Peak_ID)
+bad_peaks <- inner_join(bad_adj, peak_metadata, by='Peak_ID')
+
 best_augmented_sig$Peak_ID <- as.numeric(best_augmented_sig$Peak_ID)
 adj_p <- p.adjust(best_augmented_sig$p.value, method='BH')
 best_augmented_sig$adj_p <- adj_p
@@ -323,31 +330,53 @@ best_augmented$Peak_ID <- as.numeric(best_augmented$Peak_ID)
 best_hmdb <- inner_join(best_augmented, peak_ID_HMDB, by='Peak_ID')
 best_hmdb <- subset(best_hmdb, best_hmdb$Putative_Metabolite != 'NA')
 
-best_adj <- subset(best_augmented_sig, best_augmented_sig$adj_p < 0.5) 
+best_adj <- subset(best_augmented_sig, best_augmented_sig$adj_p < 0.05) 
+
+no_ID <- subset(best_augmented_sig, best_augmented_sig$p.value < 0.05) 
+
 best_adj_hmdb <- inner_join(best_adj, peak_metadata, by='Peak_ID')
 best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='NA')
 best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite != 'Citrate')
 
 sig_peaks <- distinct(best_adj_hmdb, Putative_Metabolite, .keep_all = TRUE)
 sig_peaks <- distinct(sig_peaks, HMDB, .keep_all = TRUE)
+tab <- sig_peaks[,c(28,29,30)]
+tab_flex <- flextable::flextable(tab)
 
 best_adj_hmdb <- subset(best_adj_hmdb,best_adj_hmdb$Peak_ID %in% sig_peaks$Peak_ID)
+batches <- sample_sheet[c(2,11)]
+batches <- distinct(batches,Sample_Name, .keep_all = TRUE)
+batches$Batch <- as.factor(batches$Batch)
+best_adj_sample <- inner_join(best_adj_hmdb, batches, by='Sample_Name')
+best_adj_sample<- subset(best_adj_sample,best_adj_sample$Putative_Metabolite != 'Fumarate?')
+best_adj_sample<- subset(best_adj_sample,best_adj_sample$Putative_Metabolite != 'Traumatic acid')
 
-best_adj_hmdb%>%
+
+mets <- c(166:194)
+
+best_adj_hmdb %>%
+  #subset(Peak_ID %notin% mets) %>%
+  subset(Putative_Metabolite != 'Fumarate?')%>%
 ggplot(aes(x = DAS44, y=Peak_Intensity)) +
-  geom_point(size=0.5, alpha=0.7) + 
- 
+  geom_point(size=1,
+             #aes(colour= Batch),
+             #colour= ifelse(best_adj_hmdb$Peak_Intensity > 17.5, 'red', 'black'),
+             alpha=0.7) + 
   geom_smooth(method='lm',
               colour='red')+
   facet_wrap(~Putative_Metabolite, scales = "free_y")+
     theme(strip.background = element_rect(fill='white', 
                                         size=1.5),
         strip.text.x= element_text(face = "bold.italic",
-                                   size=8))+
+                                   size=12))+
+  stat_cor(method = "spearman", 
+           vjust=1, hjust=-1.7,
+           size=4)+
   labs(x='ΔDAS44',
        y='Peak Intensity',
        title='Negative Ion Mode')+
-  theme_minimal()
+  theme_minimal()+
+  theme(legend.position = 'none')
 
 resp_melt_samples <- subset(resp_melt_top, resp_melt_top$Peak_ID %in% best_adj_hmdb$Peak_ID)
 best_adj_hmdb$Sample_Name <- resp_melt_samples$Sample_Name

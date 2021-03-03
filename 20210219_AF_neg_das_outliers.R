@@ -114,9 +114,10 @@ resp_outlier_sig <- resp_outlier_sig%>%
   subset(Putative_Metabolite != "Fumarate?")%>%
   subset(Putative_Metabolite != 'Traumatic acid')
   
+# initial plot
 resp_outlier_sig%>%
   ggplot(aes(x = DAS44, y=Peak_Intensity)) +
-  geom_point(aes(colour=Smoking), size=1, alpha=0.7) + 
+  geom_point(size=1, alpha=0.7) + 
   stat_cor(method = "spearman", 
            vjust=8, hjust=0,
            size=2.5)+
@@ -134,12 +135,11 @@ resp_outlier_sig%>%
 resp_outlier_sig$Sample_ID <- 0
 resp_outlier_sig$Sample_ID <- ifelse(resp_outlier_sig$Peak_Intensity >18, resp_outlier_sig$Sample_Name,'')
 
+# 
 resp_outlier_sig%>%
   ggplot(aes(x = DAS44, y=Peak_Intensity)) +
-  geom_point(aes(colour=Smoking), size=1, alpha=0.7) + 
-  stat_cor(method = "spearman", 
-           vjust=8, hjust=0,
-           size=2.5)+
+  geom_point(aes(colour=Smoking),
+             size=1, alpha=0.7) + 
   geom_smooth(method='lm',
               colour='red')+
   facet_wrap(~Putative_Metabolite, scales = "free_y")+
@@ -147,6 +147,8 @@ resp_outlier_sig%>%
                                         size=1.5),
         strip.text.x= element_text(face = "bold.italic",
                                    size=8))+
+  geom_vline(xintercept= -2, linetype="dotted")+
+  geom_hline(yintercept= 17.5, linetype="dotted")+
   labs(x='ΔDAS44',
        y='Peak Intensity')+
   geom_text_repel(aes(x = DAS44, y=Peak_Intensity, label = Sample_ID),
@@ -158,3 +160,61 @@ resp_outlier_sig%>%
   theme_minimal()
 
 resp_outlier_dist <- distinct(resp_outlier_sig,Peak_ID, .keep_all = TRUE)
+
+resp_outlier_sig%>%
+  ggplot(aes(x = DAS44, y=Peak_Intensity)) +
+  geom_point(size=1, alpha=0.7) + 
+  stat_cor(method = "spearman", 
+           vjust=5, hjust=-0.7,
+           size=3)+
+  geom_smooth(method='lm',
+              colour='red')+
+  facet_wrap(~Putative_Metabolite, scales = "free_y")+
+  theme(strip.background = element_rect(fill='white', 
+                                        size=1.5),
+        strip.text.x= element_text(face = "bold.italic",
+                                   size=8))+   
+  geom_hline(yintercept= 17.5, linetype="dotted")+
+  labs(x='ΔDAS44',
+       y='Peak Intensity')+
+    theme_minimal()
+
+resp_outlier_sig%>%
+  ggplot(aes(x = DAS44, y=Peak_Intensity)) +
+  geom_point(aes(colour=Smoking),
+             size=2, alpha=0.5) + 
+  
+  facet_wrap(~Putative_Metabolite, scales = "free_y")+
+  theme(strip.background = element_rect(fill='white', 
+                                        size=1.5),
+        strip.text.x= element_text(face = "bold.italic",
+                                   size=8))+
+  geom_vline(xintercept= -2, linetype="dotted")+
+  geom_hline(yintercept= 17.5, linetype="dotted")+
+  labs(x='ΔDAS44',
+       y='Peak Intensity',
+       fill='Smoker status')+
+  scale_colour_manual(values=c("#009900", "#CC0099", "#0066FF"),
+                      name="Smoker status",
+                    breaks=c("C", "F", "N"),
+                    labels=c("Current", "Former", "Non-Smoker"))+
+  theme_minimal()
+
+resp_outlier_sig$Sym_Dur <- 0
+resp_outlier_sig$Sym_Dur <- ifelse(resp_outlier_sig$SymptomDuration >9, '> 9', '< 9')
+
+resp_outlier_sig%>%
+  ggplot(aes(x = DAS44, y=Peak_Intensity)) +
+  geom_point(aes(colour= Group),
+             size=2, alpha=0.5) + 
+  facet_wrap(~Putative_Metabolite, scales = "free_y")+
+  theme(strip.background = element_rect(fill='white', 
+                                        size=1.5),
+        strip.text.x= element_text(face = "bold.italic",
+                                   size=8))+
+  geom_vline(xintercept= -2, linetype="dotted")+
+  geom_hline(yintercept= 17.5, linetype="dotted")+
+  labs(x='ΔDAS44',
+       y='Peak Intensity',
+       fill='Smoker status')+
+  theme_minimal()

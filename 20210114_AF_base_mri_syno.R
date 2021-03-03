@@ -65,7 +65,7 @@ resp_ints <- read.csv('20201105_resp_ints.csv', header=TRUE)
 resp_diff <- read.csv('20201105_resp_diff.csv', header=TRUE)
 peak_IDs <- read.table (file="20200117_Taser_PeakIDs.csv", header=TRUE, row.names=1, sep= "\t")
 peak_ID_HMDB <- read.csv(file='peak_IDs_HMDB.csv', header=TRUE, row.names=1)
-peak_metadata <- read.csv(file='20200427_Taser_PeakMetadata.csv', header=TRUE, row.names=1)
+peak_metadata <- read.csv(file='20210217_neg_peak_metadata.csv', header=TRUE)
 sample_sheet = read.table (file="20200318_Taser_SampleSheet.csv", header=TRUE, row.names=1)
 patient_metadata <- read.csv(file='20190713_Taser_PatientMetadata.csv', header=TRUE, row.names=1)
 novel_peak_data <- read.csv(file='20200430_Taser_NEG_PeakIntensities.csv', header=TRUE, row.names=1)
@@ -76,13 +76,12 @@ names(sample_sheet)[2] <- 'Sample_Name'
 peak_IDs$Peak_ID <- rownames(peak_IDs)
 peak_IDs$Peak_ID  <- as.numeric(peak_IDs$Peak_ID )
 peak_IDs$moleculeName  <- as.character(peak_IDs$moleculeName )
-colnames(peak_metadata)[6] <- 'Peak_ID'
-peak_metadata <- left_join(peak_metadata, peak_IDs, by='Peak_ID')
 names(sample_sheet)[2] <- 'Sample_Name'
 
 peak_metadata_IDs <- subset(peak_metadata, peak_metadata$identification != '')
 peak_metadata$Peak_ID_test <- peak_metadata$Peak_ID
 
+peak_metadata_HMDB <- read.csv('20210217_neg_peak_metadata.csv')
 # Which metabolites over the 18 months are associated with the erosion imaging score outcomes after 18 months of treatment?
 # Xray and MRI should be done independently
 # MRI Erosion
@@ -147,7 +146,7 @@ limma_fun <- function(matrix_AB, no., var1, var2){
 
 mri_limma <- limma_fun(mri_pre_limma_t, 1500, 'Positive', 'Negative')
 mri_limma$Sig <- 0
-mri_limma$Sig <- ifelse(mri_limma$adj.P.Val <0.05, 1, 0) 
+mri_limma$Sig <- ifelse(mri_limma$adj.P.Val <0.05, 'Significant', 'Not significant') 
 mri_limma$Sig_Peaks <- ifelse(mri_limma$P.Value<0.05 & mri_limma$identification != '', mri_limma$Peak_ID, '')
 
 mri_limma_hmdb <- inner_join(mri_limma, peak_ID_HMDB, by='Peak_ID')
@@ -222,10 +221,11 @@ ggplot(pca_coord) +
 mri_resping <- mri_pre_limma_2[,-1]
 
 set.seed(42)
-index <- createDataPartition(mri_resping$Syno_Response, p = 0.85, list = FALSE)
+index <- createDataPartition(mri_resping$Syno_Response, p = 0.7, list = FALSE)
 train_data <- mri_resping[index, ]
 test_data  <- mri_resping[-index, ]
-
+cores <- makeCluster(detectCores()-1)
+registerDoParallel(cores = cores)
 tuneGrid <- expand.grid(.mtry = c(1:sqrt(1458)))
 set.seed(42)
 model_rf <- caret::train(Syno_Response~.,
@@ -240,7 +240,7 @@ model_rf <- caret::train(Syno_Response~.,
                                                   verboseIter = FALSE, 
                                                   allowParallel = TRUE),
                          importance = TRUE,
-                         ntree = 300)
+                         ntree = 500)
 
 
 
@@ -271,7 +271,7 @@ imps <- as.data.frame(imp_peaks$importance)
 imps$Peak_ID <- rownames(imps)
 imps <- imps[,-1]
 colnames(imps)[1] <- 'Importance'
-imps <- subset(imps,imps$Importance >30)
+imps <- subset(imps,imps$Importance >40)
 imps$Peak_ID <- gsub('X','', imps$Peak_ID)
 imps$Peak_ID <- as.numeric(imps$Peak_ID)
 
@@ -281,8 +281,8 @@ imps_hmdb_id <- subset(imps_hmdb, imps_hmdb$Putative_Metabolite !='NA')
 imps_hmdb_id <- distinct(imps_hmdb_id, Putative_Metabolite, .keep_all = TRUE)
 imps_hmdb_id$Putative_Metabolite <- as.factor(imps_hmdb_id$Putative_Metabolite)
 
-write.csv(imps_hmdb_id, '20210114_AF_base_mri_syno_FI.csv')
-imps_hmdb_id <- read.csv('20210114_AF_base_mri_syno_FI.csv')
+#write.csv(imps_hmdb_id, '20210114_AF_base_mri_syno_FI.csv')
+#imps_hmdb_id <- read.csv('20210114_AF_base_mri_syno_FI.csv')
 # Plot the annotated peaks from feature importance
 ggplot(imps_hmdb_id)+
   geom_col(aes(reorder(Putative_Metabolite, Importance), 
@@ -298,7 +298,17 @@ ggplot(imps_hmdb_id)+
 ### Build linear models for the top peaks from feature selection for each of the disease measurements
 mri_melt$Peak_ID <- gsub('X','', mri_melt$Peak_ID)
 mri_melt_top <- mri_melt
-  #subset(mri_melt, mri_melt$Peak_ID %in% imps_hmdb$Peak_ID)
+#subset(mri_melt, mri_melt$Peak_ID %in% imps_hmdb$Peak_ID)
+
+mri_melt_top%>%
+  subset(Peak_ID =='74')%>%
+  ggplot(aes(y=Peak_Intensity, x=MRI_Synovitis))+
+  geom_point()+
+  theme_light()+
+  geom_smooth(method='lm')+
+  stat_cor(method='spearman')+
+  labs(x='ΔSynovitis after 18 months',
+       y='Peak intensity at baseline')
 
 ints_nested <- mri_melt_top %>%
   group_by (Peak_ID) %>%
@@ -325,7 +335,7 @@ top_50_peaks <- head(bestest_fit, 50)
 top_100_peaks <- head(bestest_fit, 100)
 top_200_peaks <- head(bestest_fit, 200)
 
-best_augmented <- top_200_peaks %>% 
+best_augmented <- bestest_fit %>% 
   mutate(augmented = map(model, ~augment(.x))) %>% 
   unnest(augmented)
 best_augmented_sig <- subset(best_augmented, best_augmented$p.value< 0.05)
@@ -336,14 +346,14 @@ best_augmented$Peak_ID <- as.numeric(best_augmented$Peak_ID)
 best_hmdb <- inner_join(best_augmented, peak_ID_HMDB, by='Peak_ID')
 best_hmdb <- subset(best_hmdb, best_hmdb$Putative_Metabolite != 'NA')
 
-best_adj <- subset(best_augmented_sig, best_augmented_sig$adj_p < 0.05) 
-best_adj_hmdb <- inner_join(best_adj, peak_ID_HMDB, by='Peak_ID')
+best_adj <- subset(best_augmented_sig, best_augmented_sig$p.value < 0.05) 
+best_adj_hmdb <- inner_join(best_adj, peak_metadata, by='Peak_ID')
 best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='NA')
 best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite != 'Citrate')
 
 sig_peaks <- distinct(best_adj_hmdb, Putative_Metabolite, .keep_all = TRUE)
 sig_peaks <- distinct(sig_peaks, HMDB, .keep_all = TRUE)
-
+sig_peaks$ID <- sig_peaks$Peak_ID
 best_adj_hmdb <- subset(best_adj_hmdb,best_adj_hmdb$Peak_ID %in% sig_peaks$Peak_ID)
 
 syno_metabolites <- best_adj_hmdb
@@ -359,23 +369,28 @@ mri_syno <- mets_reduce(syno_metabolites)
 metabolite_counts <- as.data.frame(as.matrix(table(mri_syno$Putative_Metabolite, mri_syno$Disease_Measure_Type)))
 names(metabolite_counts)<- c('Putative_Metabolite', 'Disease_Measure','Frequency')
 
-write.csv(mri_syno, '20210118_AF_base_mri_syno.csv')
+#write.csv(mri_syno, '20210118_AF_base_mri_syno.csv')
 
-ggplot(best_adj_hmdb,aes(x = MRI_Synovitis, y=Peak_Intensity)) +
-  geom_point() + 
-  stat_cor(method = "pearson", 
-           vjust=1, hjust=0.1,
-           size=4)+
-  geom_line(aes(y = .fitted), color = "red") +
-  facet_wrap(~Putative_Metabolite, scales = "free_y")+
+best_adj_hmdb%>%
+  ggplot(aes(x = MRI_Synovitis, y=Peak_Intensity)) +
+  geom_point(size=0.5, alpha=0.7) + 
+  geom_smooth(method='lm',
+              colour='red')+
   theme(strip.background = element_rect(fill='white', 
                                         size=1.5),
         strip.text.x= element_text(face = "bold.italic",
                                    size=12))+
+  facet_wrap(~Putative_Metabolite, scales = "free_y")+
+  stat_cor(method = "spearman", 
+           vjust=1, hjust=0,
+           size=3)+
   labs(x='ΔMRI Synovitis',
-       y='Peak Intensity')+
+       y='Peak Intensity',
+       title='Negative Ion Mode')+
   theme_minimal()
 
+
+?geom_smooth
 ### Directly investigating differential abundance of metabolites of interest
 mri_melt_top$Syno_Response <- 0
 mri_melt_top$Syno_Response[mri_melt_top$MRI_Synovitis >= -6.5] <- 'Negative'
@@ -419,7 +434,9 @@ mri_melt_hmdb %>%
                      method='wilcox')
   
 ## Attempt to differentiate Mri synovitis responses using the selected metabolites at baseline
-mets <- c('Uric acid', "3-hydroxybutyrate", "L-Glutamate", "L-Tyrosine", "LysoPC", "Ribulose-5-phosphate")
+mets <- c('Uric acid', "3-hydroxybutyrate", "Aminoadipic acid", "LysoPC", "Ribulose-5-phosphate")
+#mets <- c('Uric acid', "L-Tyrosine", "Ribulose-5-phosphate")
+
 mri_limma_select <- subset(mri_limma_hmdb, mri_limma_hmdb$P.Value< 0.05)
 mri_limma_select <- subset(mri_limma_select, mri_limma_select$Putative_Metabolite != 'NA')
   
@@ -444,7 +461,6 @@ syno_sel$Response <- syno_mets$Syno_Response
 syno_melt <- melt(syno_sel)
 names(syno_melt) <- c('Response', 'Peak_ID', 'Peak_Intensity')
 
-
 stat_test <- syno_melt %>%
   group_by(Peak_ID) %>%
   rstatix::wilcox_test(Peak_Intensity ~ Response) %>%
@@ -462,15 +478,17 @@ ggplot(syno_melt, aes(Response, Peak_Intensity,
                      vjust=8, 
                      hjust=-1)+
   theme(legend.position = 'none')+
-  labs(y='Peak Intensity')+
-  ylim(15,23)
-
+  labs(y='Peak Intensity')
 
 #### Using logistic regression for prediction of patient outcomes. 
 mri_resping <- mri_pre_limma_2[,-1]
+syno_sel <- mri_resping
+names(syno_sel)[1]<- 'Response'
 syno_sel$Response[syno_sel$Response == 'Positive'] <- 1
 syno_sel$Response[syno_sel$Response == 'Negative'] <- 0
 syno_sel$Response <- as.numeric(syno_sel$Response)
+
+#write.csv(syno_sel, '20210218_AF_neg_syno.csv')
 
 set.seed(42)
 index <- createDataPartition(syno_sel$Response, p = 0.7, list = FALSE)

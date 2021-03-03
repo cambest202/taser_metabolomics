@@ -58,7 +58,8 @@ peak_metadata$Putative_Metabolite <- ifelse(peak_metadata$Putative_Metabolite ==
 peak_metadata$Putative_Metabolite <- ifelse(peak_metadata$Putative_Metabolite == 'LysoPE', paste0(peak_metadata$Putative_Metabolite,'?'),peak_metadata$Putative_Metabolite)
 peak_metadata$Putative_Metabolite <- ifelse(peak_metadata$Putative_Metabolite == 'PI', paste0(peak_metadata$Putative_Metabolite,'?'),peak_metadata$Putative_Metabolite)
 peak_metadata$Putative_Metabolite <- ifelse(peak_metadata$Putative_Metabolite == 'PC', paste0(peak_metadata$Putative_Metabolite,'?'),peak_metadata$Putative_Metabolite)
-peak_metadata$Putative_Metabolite <- ifelse(peak_metadata$Putative_Metabolite == 'GPC', paste0(peak_metadata$Putative_Metabolite,'?'),peak_metadata$Putative_Metabolite)
+peak_metadata$Putative_Metabolite <- ifelse(peak_metadata$Peak_ID == '414', paste0(peak_metadata$Putative_Metabolite,'(1)?'),peak_metadata$Putative_Metabolite)
+peak_metadata$Putative_Metabolite <- ifelse(peak_metadata$Peak_ID == '322', paste0(peak_metadata$Putative_Metabolite,'(2)?'),peak_metadata$Putative_Metabolite)
 peak_metadata$Putative_Metabolite <- ifelse(peak_metadata$Putative_Metabolite == 'PE', paste0(peak_metadata$Putative_Metabolite,'?'),peak_metadata$Putative_Metabolite)
 
 ### Differential Analysis: Metabolic changes between positive and negative responders ----------
@@ -186,6 +187,7 @@ lfdrvals <- lfdr(toptable_AF$P.Value, pi0)
 qobj <- qvalue(toptable_AF$P.Value)
 hist(qobj)
 
+
 # PCA of samples
 scaled_intensities <- scale(t(resp_AF_limma_t))
 scaled_intensities[do.call(cbind, lapply(scaled_intensities, is.nan))] <- 0
@@ -246,15 +248,19 @@ best_fit <- model_perf %>%
   top_n(n=4, wt=r.squared)
 bestest_fit <- with(model_perf,model_perf[order(-r.squared),])
 
-top_20_peaks <- head(bestest_fit, 20)
-top_50_peaks <- head(bestest_fit, 50)
-top_100_peaks <- head(bestest_fit, 100)
-top_200_peaks <- head(bestest_fit, 200)
-
 best_augmented <- bestest_fit %>% 
   mutate(augmented = map(model, ~augment(.x))) %>% 
   unnest(augmented)
 best_augmented_sig <- subset(best_augmented, best_augmented$p.value< 0.05)
+best_augmented_sigish <- subset(best_augmented, best_augmented$p.value< 0.2)
+
+cor_dist <- distinct(best_augmented_sigish, Peak_ID, .keep_all = TRUE)
+cor_dist$Peak_ID <- as.numeric(cor_dist$Peak_ID)
+cor_dist_ID <- inner_join(cor_dist, peak_metadata, by='Peak_ID')
+cor_dist_cut <- cor_dist_ID[,c(1,31)]
+cor_dist_cut$Ion_Mode <- 'Pos'
+#write.csv(cor_dist_cut, '20210225_AF_pos_das_cors.csv')
+
 best_augmented_sig$Peak_ID <- as.numeric(best_augmented_sig$Peak_ID)
 adj_p <- p.adjust(best_augmented_sig$p.value, method='BH')
 best_augmented_sig$adj_p <- adj_p
@@ -273,11 +279,18 @@ das_metabolites <-best_adj_hmdb
 colnames(das_metabolites)[17] <-'Disease_Measure'
 das_metabolites$Disease_Measure_Type <- 'DAS'
 
-ggplot(best_adj_hmdb,aes(x = DAS44, y=Peak_Intensity)) +
-  geom_point() + 
+best_adj_hmdb_dist <- distinct(best_adj_hmdb,Putative_Metabolite, .keep_all = TRUE)
+best_adj_hmdb_dist$ID <- best_adj_hmdb_dist$Peak_ID
+
+best_adj_hmdb%>%
+  subset(Peak_ID %in% best_adj_hmdb_dist$Peak_ID)%>%
+ggplot(aes(x = DAS44, y=Peak_Intensity)) +
+  geom_point(size=0.5, alpha=0.7) + 
   stat_cor(method = "pearson", 
-           vjust=1, hjust=0.1,
-           size=4)+
+           vjust=1, hjust=0,
+           size=3)+
+  geom_smooth(method='lm',
+              colour='red')+
   geom_line(aes(y = .fitted), color = "red") +
   facet_wrap(~Putative_Metabolite, scales = "free_y")+
   theme(strip.background = element_rect(fill='white', 
@@ -555,26 +568,16 @@ metabolite_counts%>%
 
 ## Determine the most important features to predict clinical outcomes
 # Reduce number of features through those correlating peaks
-resp_split <- resp_diff[c(11,13:1597)]
-resp_split <- resp_split[,-1]
-resp_split_t <- as.data.frame(t(resp_split))
-resp_split_t$Peak_ID <- rownames(resp_split_t)
-resp_split_t$Peak_ID <- gsub('X','', resp_split_t$Peak_ID)
-resp_split_done <- subset(resp_split_t, resp_split_t$Peak_ID %in% toptable_AF_sig$Peak_ID)
-#resp_split_done <- subset(resp_split_done, resp_split_done$Peak_ID %in% toptable_AF_sig$Peak_ID)
-
-resp_red <- resp_split_done[,-64]
-resp_red_t <- as.data.frame(t(resp_red))
-resp_red_t$Response <- resp_PN_ints$DAS44_Response
-resp_red_t$Response <- as.character(resp_red_t$Response)
-#resp_red_t$Response[resp_red_t$Response %like% 'Positive'] <- 1
-#resp_red_t$Response[resp_red_t$Response %like% 'Negative'] <- 0
-#resp_red_t$Response <- as.numeric(resp_red_t$Response)
+resp_LRM_2 <- resp_diff[,c(11,13:1596)]
+names(resp_LRM_2)[1] <- 'Response'
+resp_LRM_2$Response[resp_LRM_2$Response == 'Good' |resp_LRM_2$Response == 'Remission'] <- 1
+resp_LRM_2$Response[resp_LRM_2$Response == 'Mild' |resp_LRM_2$Response == 'Poor'] <- 0
+resp_LRM_2$Response<- as.factor(resp_LRM_2$Response)
 
 set.seed(42)
-index <- createDataPartition(resp_red_t$Response, p = 0.8, list = FALSE)
-train_data <- resp_red_t[index, ]
-test_data  <- resp_red_t[-index, ]
+index <- createDataPartition(resp_LRM_2$Response, p = 0.8, list = FALSE)
+train_data <- resp_LRM_2[index, ]
+test_data  <- resp_LRM_2[-index, ]
 test_data$Response <- as.factor(test_data$Response)
 cores <- makeCluster(detectCores()-1)
 registerDoParallel(cores = cores)
@@ -582,11 +585,11 @@ tuneGrid <- expand.grid(.mtry = c(1:sqrt(1458)))
 set.seed(42)
 model_rf <- train(Response~.,
                          data = train_data,
-                         method = "sv",
+                         method = "rf",
                          metric = "Accuracy",
                          tuneGrid=tuneGrid,
                          trControl = trainControl(method = "repeatedcv",
-                                                  number =5,
+                                                  number =10,
                                                   repeats = 5, 
                                                   savePredictions = TRUE, 
                                                   verboseIter = FALSE, 
@@ -621,7 +624,7 @@ imps <- as.data.frame(imp_peaks$importance)
 imps$Peak_ID <- rownames(imps)
 imps <- imps[,-1]
 colnames(imps)[1] <- 'Importance'
-#imps <- subset(imps,imps$Importance >10)
+imps <- subset(imps,imps$Importance >40)
 imps$Peak_ID <- gsub('X','', imps$Peak_ID)
 imps$Peak_ID <- as.numeric(imps$Peak_ID)
 
@@ -660,6 +663,15 @@ resp_red_t$Response <- as.character(resp_red_t$Response)
 resp_red_t$Response[resp_red_t$Response=='Positive'] <- 1
 resp_red_t$Response[resp_red_t$Response=='Negative'] <- 0
 resp_red_t$Response <- as.integer(resp_red_t$Response)
+
+resp_LRM <- resp_diff[,c(11,13:1596)]
+names(resp_LRM)[2:1585] <- paste0('Pos_', names(resp_LRM)[2:1585])
+names(resp_LRM)[1] <- 'Response'
+resp_LRM$Response[resp_LRM$Response == 'Good' |resp_LRM$Response == 'Remission'] <- 1
+resp_LRM$Response[resp_LRM$Response == 'Mild' |resp_LRM$Response == 'Poor'] <- 0
+resp_LRM$Response<- as.factor(resp_LRM$Response)
+
+write.csv(resp_LRM, '20210223_AF_pos_das_resp.csv')
 
 set.seed(42)
 index <- createDataPartition(resp_red_t$Response, p = 0.8, list = FALSE)
