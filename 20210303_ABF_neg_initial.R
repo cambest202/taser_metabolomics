@@ -767,3 +767,36 @@ AF_cors_select %>%
        y='ΔPeak Intensity')+
   theme_minimal()
 
+
+
+
+## Plotting the course of metabolite levels during treatment (baseline -- > 3 months --> 18 months) -----
+# Look specifically at the metabolites which significantly correlated with DAS44 changes over 18 months
+time_course <- resp_ABF
+time_course$Sample_Name <- rownames(time_course)
+
+time_melt <- melt(time_course)
+names(time_melt) <- c('Sample_Name', 'Peak_ID', 'Peak_Intensity')
+time_melt$Time <-0
+time_melt$Time[time_melt$Sample_Name %like% 'A'] <- 0
+time_melt$Time[time_melt$Sample_Name %like% 'B'] <- 3
+time_melt$Time[time_melt$Sample_Name %like% 'F'] <- 18
+
+time_melt$Sample_Name <- substr(time_melt$Sample_Name,1,4)
+time_melt_mean <- time_melt %>% group_by(Peak_ID,Time) %>% summarise(x = mean(time_melt$Peak_Intensity), groups(Peak_ID,Time))
+
+time_melt_mean <- aggregate(time_melt$Peak_Intensity, FUN=mean, 
+          by=list(time_melt$Peak_ID, time_melt$Time))
+names(time_melt_mean) <- c('Peak_ID', 'Time', 'Mean_Peak_Intensity')
+time_melt_mean$Peak_ID <- gsub('X', '', time_melt_mean$Peak_ID)
+time_melt_mean_sig <- subset(time_melt_mean, time_melt_mean$Peak_ID %in% AF_sig$Peak_ID)
+
+time_melt_mean_sig%>%
+  subset(Peak_ID == 421) %>%
+  ggplot(aes(x=Time, y=Mean_Peak_Intensity,
+         colour=Peak_ID))+
+  geom_line()+
+  theme_minimal()
+
+###------
+
