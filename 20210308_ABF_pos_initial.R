@@ -1,4 +1,5 @@
-### Investigating whether 3 month metabolic changes can be used to predict 18 month outcomes
+### Positive Ion Mode 
+###Investigating whether 3 month metabolic changes can be used to predict 18 month outcomes
 ## May supplement the baseline metabolic signatures of 18 month DAS44 and synovitis outcomes
 ###libraries------
 library(ggplot2)
@@ -47,20 +48,15 @@ library(forcats)
 setwd('/Users/cameronbest/University/MRC_DTP_in_Precision_Medicine/Project/RA/Taser_data/Analysis/taser_metabolomics')
 
 ### files------
-resp_AB <- read.csv(file='20210304_Taser_AB_NEG_PeakIntensities.csv', header=TRUE, row.names=1)
-resp_AF <- read.csv(file='20210304_Taser_AF_NEG_PeakIntensities.csv', header=TRUE, row.names=1)
-resp_ABF <- read.csv(file='20210304_Taser_ABF_NEG_PeakIntensities.csv', header=TRUE, row.names=1)
-peak_IDs <- read.csv(file="20200427_Taser_PeakMetadata.csv", header=TRUE, row.names=1)
-peak_metadata <- read.csv(file='20210217_neg_peak_metadata.csv', header=TRUE)
+resp_AB <- read.csv(file='20210308_Taser_AB_POS_PeakIntensities.csv', header=TRUE, row.names=1)
+resp_AF <- read.csv(file='20210308_Taser_AF_POS_PeakIntensities.csv', header=TRUE, row.names=1)
+resp_ABF <- read.csv(file='20210308_Taser_ABF_POS_PeakIntensities.csv', header=TRUE, row.names=1)
+peak_metadata <- read.csv(file='20200521_Taser_POS_Peakdata.csv', header=TRUE, row.names=1)
 sample_sheet <- read.table (file="20200318_Taser_SampleSheet.csv", header=TRUE, row.names=1)
 patient_metadata <- read.csv(file='20190713_Taser_PatientMetadata.csv', header=TRUE, row.names=1)
-novel_peak_data <- read.csv(file='20200430_Taser_NEG_PeakIntensities.csv', header=TRUE, row.names=1)
 kegg <- read.csv('20210305_kegg_list.csv')
 
 kegg <- distinct(kegg, Kegg_code, .keep_all = TRUE)
-test <- t(novel_peak_data)
-names(peak_IDs)[6] <- 'Peak_ID'
-peak_IDs$Peak_ID  <- as.numeric(peak_IDs$Peak_ID )
 names(sample_sheet)[2] <- 'Sample_Name'
 
 ## Helpful functions
@@ -82,8 +78,8 @@ limma_fun <- function(matrix_AB, no., var1, var2){
   toptable$Peak_ID <- as.numeric(as.character(toptable$Peak_ID))
   toptable <- toptable[,c(ncol(toptable),1:(ncol(toptable)-1))]
   toptable <- inner_join(toptable, peak_metadata, by = 'Peak_ID')
-
-  }
+  
+}
 
 # Prepare matrices for limma (variables as columns, features to rows)
 resp_AB_mat <- as.data.frame((resp_AB))
@@ -114,9 +110,9 @@ resp_BF_L <- t(resp_BF_mat)
 colnames(resp_BF_L)[colnames(resp_BF_L) %like% 'B'] <- 'B';colnames(resp_BF_L)[colnames(resp_BF_L) %like% 'F'] <- 'F'
 rownames(resp_BF_L) <- gsub('X', '', rownames(resp_BF_L))
 
-AB_limma <- limma_fun(resp_AB_L, 1500, 'A', 'B')
-AF_limma <- limma_fun(resp_AF_L, 1500, 'A', 'F')
-BF_limma <- limma_fun(resp_BF_L, 1500, 'B', 'F')
+AB_limma <- limma_fun(resp_AB_L, 1600, 'A', 'B')
+AF_limma <- limma_fun(resp_AF_L, 1600, 'A', 'F')
+BF_limma <- limma_fun(resp_BF_L, 1600, 'B', 'F')
 
 qvals <- function(limma_table){
   pi0 <- 2*mean(limma_table$P.Value > 0.05)
@@ -142,15 +138,15 @@ limma_ID <- function(limma_table){
   limma_table_ID%>%
     subset(Putative_Metabolite != 'Sulfasalazine')%>%
     subset(Putative_Metabolite != 'Galactonic/Gluconic acid')%>%
-  ggplot(aes(x=logFC, y=-log10(P.Value), 
-             colour=Sig, 
-             group=Sig)) +
+    ggplot(aes(x=logFC, y=-log10(P.Value), 
+               colour=Sig, 
+               group=Sig)) +
     geom_point (alpha=0.7) +
     theme_minimal() +
     labs (x='LogFC',
           y='-Log p-value',
           colour='Adjusted \np-value',
-          title= 'Negative Ion Mode')+
+          title= 'Positive Ion Mode')+
     geom_text_repel(aes(x = logFC, y = -log10(P.Value), label = Sig_Names),
                     box.padding =1,
                     size=2.5,
@@ -159,9 +155,10 @@ limma_ID <- function(limma_table){
                     arrow = arrow(length = unit(0.0015, "npc"))) +  
     theme(plot.title = element_text(size = rel(1.5), hjust = 0.5),
           axis.title = element_text(size = rel(1.25)))+
-    scale_color_brewer(palette = "Set1",direction=-1)
-  }
-  
+    scale_color_brewer(palette = "Set1",direction=-1)+
+    ylim(0,15)
+}
+
 AB_ID <- limma_ID(AB_limma)
 AB_tab <- AB_ID$data
 AF_ID <- limma_ID(AF_limma)
@@ -181,9 +178,9 @@ cors <- function(melt_table, disease_measure){
   ints_nested <- melt_table %>%
     group_by (Peak_ID) %>%
     nest()
-  ints_unnested <- resp_diff_AB_melt %>%
+  ints_unnested <- melt_table %>%
     unnest(cols=c())
-  identical(resp_diff_AB_melt, ints_unnested)
+  identical(melt_table, ints_unnested)
   ints_lm <- ints_nested %>%
     mutate(model = map(data, ~lm(formula = Peak_Intensity~DAS44, data = .x)))
   model_coef_nested <- ints_lm %>%
@@ -207,6 +204,9 @@ cors <- function(melt_table, disease_measure){
   best_adj_hmdb <- subset(best_adj_hmdb, best_adj_hmdb$Putative_Metabolite !='')
   gg <- best_adj_hmdb %>%
     subset(Putative_Metabolite != 'Galactonic/Gluconic acid') %>%
+    subset(Putative_Metabolite != 'GPC') %>%
+    subset(Putative_Metabolite != 'LysoPC') %>%
+    subset(Peak_ID != '1460') %>%
     ggplot(aes(x = DAS44, y=Peak_Intensity)) +
     geom_point(size=1, alpha=0.7) + 
     stat_cor(method = "spearman", 
@@ -222,7 +222,7 @@ cors <- function(melt_table, disease_measure){
                                      size=12))+
     labs(x='ΔDAS44',
          y='ΔPeak Intensity',
-         title='Negative Ion Mode')+
+         title='Positive Ion Mode')+
     theme_minimal()
   print(gg)
   df_name <- return(best_adj_hmdb)
@@ -325,28 +325,28 @@ resp_int_BF <- resp_int_BF[,c(ncol(resp_int_BF),1:(ncol(resp_int_BF)-1))]
 # Melt the ints samples with peak intensities then add the disease data after -------
 # But first do the resp_diff as need this for the subsetting
 # Differential sample sheet and peak intensities by samples -----
-resp_diff_AB <- resp_int_AB[,c(1,4:11,13:1470)]
+resp_diff_AB <- resp_int_AB[,c(1,4:11,13:1596)]
 resp_diff_AB <- aggregate(.~Sample, resp_diff_AB, diff, na.rm=TRUE)
 resp_diff_AB <- resp_diff_AB[resp_diff_AB$CRP != 'numeric(0)', ]
 
-resp_diff_AF <- resp_int_AF[,c(1,4:11,13:1470)]
+resp_diff_AF <- resp_int_AF[,c(1,4:11,13:1596)]
 resp_diff_AF <- aggregate(.~Sample, resp_diff_AF, diff, na.rm=TRUE)
 resp_diff_AF <- resp_diff_AF[resp_diff_AF$CRP != 'numeric(0)', ]
 
-resp_diff_BF <- resp_int_BF[,c(1,4:11,13:1470)]
+resp_diff_BF <- resp_int_BF[,c(1,4:11,13:1596)]
 resp_diff_BF <- aggregate(.~Sample, resp_diff_BF, diff, na.rm=TRUE)
 resp_diff_BF <- resp_diff_BF[resp_diff_BF$CRP != 'numeric(0)', ]
 
 # Double the differential dfs to use alongside the complete peak df ----------
 resp_dbl_diff_AB <-rbind.data.frame(resp_diff_AB, resp_diff_AB)
 resp_dbl_diff_AB <- with(resp_dbl_diff_AB,resp_dbl_diff_AB[order(Sample),])
-resp_dbl_diff_AB[, c(2:1467)] <- map_df(resp_dbl_diff_AB[, c(2:1467)], as.numeric)
+resp_dbl_diff_AB[, c(2:1593)] <- map_df(resp_dbl_diff_AB[, c(2:1467)], as.numeric)
 resp_dbl_diff_AF <-rbind.data.frame(resp_diff_AF, resp_diff_AF)
 resp_dbl_diff_AF <- with(resp_dbl_diff_AF,resp_dbl_diff_AF[order(Sample),])
-resp_dbl_diff_AF[, c(2:1467)] <- map_df(resp_dbl_diff_AF[, c(2:1467)], as.numeric)
+resp_dbl_diff_AF[, c(2:1593)] <- map_df(resp_dbl_diff_AF[, c(2:1467)], as.numeric)
 resp_dbl_diff_BF <-rbind.data.frame(resp_diff_BF, resp_diff_BF)
 resp_dbl_diff_BF <- with(resp_dbl_diff_BF,resp_dbl_diff_BF[order(Sample),])
-resp_dbl_diff_BF[, c(2:1467)] <- map_df(resp_dbl_diff_BF[, c(2:1467)], as.numeric)
+resp_dbl_diff_BF[, c(2:1593)] <- map_df(resp_dbl_diff_BF[, c(2:1467)], as.numeric)
 
 # AB ints
 resp_int_AB_2 <- subset(resp_int_AB, resp_int_AB$Sample %in% resp_diff_AB$Sample) ## need to first produce resp_diff_AB which is done below.. 
@@ -354,7 +354,7 @@ resp_int_AB_2 <- subset(resp_int_AB, resp_int_AB$Sample %in% resp_diff_AB$Sample
 resp_int_A <- subset(resp_int_AB_2,resp_int_AB_2$time =='A')
 resp_int_B <- subset(resp_int_AB_2,resp_int_AB_2$time =='B')
 
-resp_ints_AB_melt <- resp_int_A[,c(1,13:1470)]
+resp_ints_AB_melt <- resp_int_A[,c(1,13:1596)]
 resp_ints_AB_melt <- melt(resp_ints_AB_melt)
 names(resp_ints_AB_melt) <- c('Sample_Name', 'Peak_ID', 'Peak_Intensity')
 resp_ints_AB_melt$End_DAS44 <- resp_int_B$DAS44
@@ -370,7 +370,7 @@ resp_int_F <- subset(resp_int_AF_2,resp_int_AF_2$time =='F')
 
 resp_int_A_2 <- subset(resp_int_A_2,resp_int_A_2$Sample %in% resp_int_F$Sample)
 
-resp_ints_AF_melt <- resp_int_A_2[,c(1,13:1470)]
+resp_ints_AF_melt <- resp_int_A_2[,c(1,13:1596)]
 resp_ints_AF_melt <- melt(resp_ints_AF_melt)
 names(resp_ints_AF_melt) <- c('Sample_Name', 'Peak_ID', 'Peak_Intensity')
 resp_ints_AF_melt$End_DAS44 <- resp_int_F$DAS44
@@ -386,7 +386,7 @@ resp_int_F_2 <- subset(resp_int_BF_2,resp_int_BF_2$time =='F')
 
 resp_int_B <- subset(resp_int_B,resp_int_B$Sample %in% resp_int_F_2$Sample)
 
-resp_ints_BF_melt <- resp_int_B[,c(1,13:1470)]
+resp_ints_BF_melt <- resp_int_B[,c(1,13:1596)]
 resp_ints_BF_melt <- melt(resp_ints_BF_melt)
 names(resp_ints_BF_melt) <- c('Sample_Name', 'Peak_ID', 'Peak_Intensity')
 resp_ints_BF_melt$End_DAS44 <- resp_int_F_2$DAS44
@@ -464,7 +464,7 @@ best_adj_hmdb %>%
 
 
 # Melt the samples with peak intensities and add sample sheets after ----
-resp_diff_AB_melt <- resp_dbl_diff_AB[,c(1,10:1467)]
+resp_diff_AB_melt <- resp_dbl_diff_AB[,c(1,10:1593)]
 resp_diff_AB_melt <- melt(resp_diff_AB_melt)
 names(resp_diff_AB_melt) <- c('Sample_Name', 'Peak_ID', 'Peak_Intensity')
 resp_diff_AB_melt$DAS44 <- resp_dbl_diff_AB$DAS44
@@ -477,7 +477,7 @@ resp_diff_AB_melt$PVAS <- resp_dbl_diff_AB$PVAS
 resp_diff_AB_melt$RAI <- resp_dbl_diff_AB$RAI
 resp_diff_AB_melt$SJC <- resp_dbl_diff_AB$SJC
 
-resp_diff_AF_melt <- resp_dbl_diff_AF[,c(1,10:1467)]
+resp_diff_AF_melt <- resp_dbl_diff_AF[,c(1,10:1593)]
 resp_diff_AF_melt <- melt(resp_diff_AF_melt)
 names(resp_diff_AF_melt) <- c('Sample_Name', 'Peak_ID', 'Peak_Intensity')
 resp_diff_AF_melt$DAS44 <- resp_dbl_diff_AF$DAS44
@@ -490,7 +490,7 @@ resp_diff_AF_melt$PVAS <- resp_dbl_diff_AF$PVAS
 resp_diff_AF_melt$RAI <- resp_dbl_diff_AF$RAI
 resp_diff_AF_melt$SJC <- resp_dbl_diff_AF$SJC
 
-resp_diff_BF_melt <- resp_dbl_diff_BF[,c(1,10:1467)]
+resp_diff_BF_melt <- resp_dbl_diff_BF[,c(1,10:1593)]
 resp_diff_BF_melt <- melt(resp_diff_BF_melt)
 names(resp_diff_BF_melt) <- c('Sample_Name', 'Peak_ID', 'Peak_Intensity')
 resp_diff_BF_melt$DAS44 <- resp_dbl_diff_BF$DAS44
@@ -507,25 +507,23 @@ resp_diff_BF_melt$SJC <- resp_dbl_diff_BF$SJC
 # 3 month metabolic change correlating with 3 month DAS44 change
 AB_cors <- cors(resp_diff_AB_melt)
 AB_sig <- sig_dist_peaks(AB_cors)
-AB_dist <- AB_sig[,c(1,26)]
 
 # 18 month metabolic change correlating with 18 month DAS44 change
 AF_cors <- cors(resp_diff_AF_melt)
 AF_sig <- sig_dist_peaks(AF_cors)
-AF_dist <- AF_sig[,c(1,26)]
 
 # 15 month metabolic change correlating with 15 month DAS44 change
 BF_cors <- cors(resp_diff_BF_melt)
 BF_sig <- sig_dist_peaks(BF_cors)
-BF_dist <- BF_sig[,c(1,26)]
+BF <- BF_sig[,c(1,26)]
 
 ## Correlating 3 month metabolite change with 18 month disease change
 resp_diff_AB_AFdas <- resp_diff_AB
 resp_diff_AB_AFdas <- subset(resp_diff_AB_AFdas, resp_diff_AB_AFdas$Sample %in% resp_diff_AF$Sample)
 resp_diff_AF_sub <- subset(resp_diff_AF, resp_diff_AF$Sample %in% resp_diff_AB_AFdas$Sample)
 
-resp_diff_AB_AFdas_melt <- resp_diff_AB_AFdas[,c(1,10:1467)]
-resp_diff_AB_AFdas_melt[, c(2:1459)] <- map_df(resp_diff_AB_AFdas_melt[, c(2:1459)], as.numeric)
+resp_diff_AB_AFdas_melt <- resp_diff_AB_AFdas[,c(1,10:1593)]
+resp_diff_AB_AFdas_melt[, c(2:1585)] <- map_df(resp_diff_AB_AFdas_melt[, c(2:1585)], as.numeric)
 resp_diff_AB_AFdas_melt <- melt(resp_diff_AB_AFdas_melt)
 names(resp_diff_AB_AFdas_melt) <- c('Sample_Name', 'Peak_ID', 'Peak_Intensity')
 resp_diff_AB_AFdas_melt$DAS44 <- resp_diff_AF_sub$DAS44
@@ -595,7 +593,7 @@ best_adj_hmdb %>%
                                         colour='white',
                                         size=1.5),
         strip.text.x= element_text(#face = "bold",
-                                   size=12))+
+          size=12))+
   labs(x='ΔDAS44',
        y='ΔPeak Intensity',
        title='Negative Ion Mode')
@@ -625,7 +623,7 @@ sample_AB_diff$Response <- ifelse(sample_AB_diff$Response == 'Remission' | sampl
 
 # Prepare AB peak table
 AB_peak_change <- resp_diff_AF[,-c(2:9)]
-AB_peak_change[, c(2:1459)] <- map_df(AB_peak_change[, c(2:1459)], as.numeric)
+AB_peak_change[, c(2:1585)] <- map_df(AB_peak_change[, c(2:1585)], as.numeric)
 names(AB_peak_change)[1] <-'Sample_Name'
 AB_tab <- inner_join(sample_AB_diff, AB_peak_change, by='Sample_Name')
 AB_prelrm <- AB_tab[,-c(1:3)]
@@ -654,7 +652,7 @@ sample_AF_diff$Response <- ifelse(sample_AF_diff$Response == 'Remission' | sampl
 
 # Prepare AF peak tAFle
 AF_peak_change <- resp_diff_AF[,-c(2:9)]
-AF_peak_change[, c(2:1459)] <- map_df(AF_peak_change[, c(2:1459)], as.numeric)
+AF_peak_change[, c(2:1585)] <- map_df(AF_peak_change[, c(2:1585)], as.numeric)
 names(AF_peak_change)[1] <-'Sample_Name'
 AF_tAF <- inner_join(sample_AF_diff, AF_peak_change, by='Sample_Name')
 AF_prelrm <- AF_tAF[,-c(1:3)]
@@ -691,7 +689,7 @@ summary(sample_AF_diff$Response_Sim)
 
 # Prepare AB peak table
 AB_peak_change <- resp_diff_AB[,-c(2:9)]
-AB_peak_change[, c(2:1459)] <- map_df(AB_peak_change[, c(2:1459)], as.numeric)
+AB_peak_change[, c(2:1585)] <- map_df(AB_peak_change[, c(2:1585)], as.numeric)
 names(AB_peak_change)[1] <-'Sample_Name'
 ABF_tab <- inner_join(sample_AF_diff, AB_peak_change, by='Sample_Name')
 patient_metadata$Sample_Name <- rownames(patient_metadata)
@@ -714,7 +712,7 @@ sample_sheet_AB_diff <- aggregate(.~Sample_Name, sample_sheet_AB[c(2:10)], diff,
 sample_sheet_AB_diff <- subset(sample_sheet_AB_diff,sample_sheet_AB_diff$CRP !='numeric(0)')
 sample_sheet_AB_diff[, c(2:9)] <- map_df(sample_sheet_AB_diff[, c(2:9)], as.numeric)
 names(sample_sheet_AB_diff)[2:9]<- paste0('Δ', names(sample_sheet_AB_diff)[2:9])
- 
+
 sample_sheet_AB_compl <- inner_join(sample_sheet_AB_diff,sample_sheet_A, by='Sample_Name')
 
 # Join 3 month Δpeak matrix, patient metadata and adjusted sample_sheet with 3 month and baseline disease measures -------
@@ -799,10 +797,9 @@ time_melt$Time[time_melt$Sample_Name %like% 'B'] <- 3
 time_melt$Time[time_melt$Sample_Name %like% 'F'] <- 18
 
 time_melt$Sample_Name <- substr(time_melt$Sample_Name,1,4)
-time_melt_mean <- time_melt %>% group_by(Peak_ID,Time) %>% summarise(x = mean(time_melt$Peak_Intensity), groups(Peak_ID,Time))
 
 time_melt_mean <- aggregate(time_melt$Peak_Intensity, FUN=mean, 
-          by=list(time_melt$Peak_ID, time_melt$Time))
+                            by=list(time_melt$Peak_ID, time_melt$Time))
 names(time_melt_mean) <- c('Peak_ID', 'Time', 'Mean_Peak_Intensity')
 time_melt_mean$Peak_ID <- gsub('X', '', time_melt_mean$Peak_ID)
 time_melt_mean_sig <- subset(time_melt_mean, time_melt_mean$Peak_ID %in% AF_sig$Peak_ID)
@@ -810,7 +807,7 @@ time_melt_mean_sig <- subset(time_melt_mean, time_melt_mean$Peak_ID %in% AF_sig$
 time_melt_mean_sig%>%
   subset(Peak_ID == 421) %>%
   ggplot(aes(x=Time, y=Mean_Peak_Intensity,
-         colour=Peak_ID))+
+             colour=Peak_ID))+
   geom_line()+
   theme_minimal()
 
@@ -824,10 +821,11 @@ cor_plots <- function(resp_diff_df, sig_table){
   resp_cor_sig$Peak_ID <- rownames(resp_cor_sig)
   resp_cor_sig$Peak_ID <- gsub('X', '', resp_cor_sig$Peak_ID)
   resp_cor_sig$Peak_ID <- as.numeric(resp_cor_sig$Peak_ID)
-  sig_id <- sig_table[,c(1,26)]
+  sig_id <- sig_table[,c(1,30)]
   resp_cor_sig_sel <- inner_join(sig_id,resp_cor_sig, by='Peak_ID')
-  resp_cor_sig_sel <- subset(resp_cor_sig_sel, resp_cor_sig_sel$Peak_ID != 189)
+  resp_cor_sig_sel <- subset(resp_cor_sig_sel, resp_cor_sig_sel$Peak_ID != 1548)
   resp_cor_sig_sel <- as.data.frame(resp_cor_sig_sel)
+  resp_cor_sig_sel <- distinct(resp_cor_sig_sel, Putative_Metabolite, .keep_all = TRUE )
   rownames(resp_cor_sig_sel) <- resp_cor_sig_sel$Putative_Metabolite
   resp_cor_sig_sel <- resp_cor_sig_sel[,-c(1,2)]
   resp_cor_sig_sel <- t(resp_cor_sig_sel)
@@ -862,6 +860,28 @@ cor_plots <- function(resp_diff_df, sig_table){
 AB_heats <- cor_plots(resp_diff_AB, AB_sig)
 AF_heats <- cor_plots(resp_diff_AF, AF_sig)
 BF_heats <- cor_plots(resp_diff_BF, BF_sig)
+
+AB_nope <- c(320,333,1548,199,415,730,215,208,218,322,198,414,671,461,938,421,932,667,419, 1173)
+
+AB_dist <- read.csv('20210308_AB_pos_diff_das_cor.csv')
+AF_dist <- read.csv('20210308_AB_pos_diff_das_cor.csv')
+
+AB_dist <- AB_dist %>%
+  subset(Peak_ID %notin% AB_nope)%>%
+  distinct(Putative_Metabolite, .keep_all=TRUE)
+
+AF_dist <- AF_dist %>%
+  subset(Peak_ID %notin% AB_nope)%>%
+  distinct(Putative_Metabolite, .keep_all=TRUE)
+
+BF_dist <- BF_dist %>%
+  subset(Peak_ID %notin% AB_nope)%>%
+  distinct(Putative_Metabolite, .keep_all=TRUE)
+  
+
+AB_diff_kegg <- AB_sig[,c(30,31)]
+AB_diff_kegg$Putative_Metabolite[AB_diff_kegg$Putative_Metabolite == 'Pyroglutamic acid'] <- 'L-1-Pyrroline 3-hydroxy-5-carboxylate'
+AB_diff_kegg_ID<- inner_join(kegg,AB_diff_kegg, by='Putative_Metabolite')
 
 ### Extending the correlational analyses to investigate further which metabolic pathways are perturbed during treatment
 # Which metabolites correlated with a more lenient adj. p-value cut-off?
@@ -975,7 +995,7 @@ BF_ext_kegg <- inner_join(kegg, BF_sig_ext_dist, by='Putative_Metabolite')
 BF_ext_kegg_2 <- BF_ext_kegg[,c(2,3)]
 
 # Changing metabolites across periods-------
-ABF_sum <- read.csv('20210308_ABF_diff_das_cor_summ.csv')
+ABF_sum <- read.csv('20210308_ABF_pos_diff_das_summ.csv')
 ABF_sum <- subset(ABF_sum,ABF_sum$Peak_ID != 'NA')
 ABF_sum_code <- ABF_sum
 ABF_sum_code$Correlation <- ifelse(ABF_sum_code$Correlation == 'Positive',1,-1)
@@ -987,11 +1007,14 @@ ABF_cast[is.na(ABF_cast)] <- 0
 
 ABF_melt <- melt(ABF_cast)
 names(ABF_melt) <- c('Putative_Metabolite', 'Period', 'Correlation')
-ABF_melt$Correlation <- ifelse(ABF_melt$Correlation ==1, 'Psiti')
 ABF_melt$Correlation <- as.factor(ABF_melt$Correlation)
+ABF_melt$Cor_2 <- 0
+ABF_melt$Cor_2[ABF_melt$Correlation == '1'] <- 1
+ABF_melt$Cor_2[ABF_melt$Correlation == ''] <- 0
 
 ABF_melt %>%
-  ggplot(aes(x=Period, y= fct_rev(Putative_Metabolite), fill=Correlation))+
+  subset(Putative_Metabolite != 'linolenic acid') %>%
+  ggplot(aes(x=Period, y= fct_reorder(Putative_Metabolite, Cor_2), fill=Correlation))+
   scale_fill_manual(values = c('#3399FF', '#FFFFFF', '#FF3333'),
                     name = "Correlation of \nΔmetabolite level \nwith ΔDAS44", labels = c("Negative", "None", "Positive"))+
   geom_tile(colour='black')+
@@ -1005,30 +1028,32 @@ ABF_melt %>%
 
 ABF_kegg <- inner_join(kegg, ABF_melt, by='Putative_Metabolite')%>%
   distinct(Putative_Metabolite, .keep_all=TRUE)
+ABF_kegg_sim <- ABF_kegg[,c(2,3)]
 
 
 ## Write csv files for combining positive and negative ion modes
 AB_dist_2 <-AB_dist
-AB_dist_2$Ion_Mode <- 'Negative'
-write.csv(AB_dist_2, '20210308_AB_neg_diff_das_cor.csv')
+AB_dist_2$Ion_Mode <- 'Positive'
+write.csv(AB_dist_2, '20210308_AB_pos_diff_das_cor.csv')
 
 AF_dist_2 <-AF_dist
-AF_dist_2$Ion_Mode <- 'Negative'
-write.csv(AF_dist_2, '20210308_AF_neg_diff_das_cor.csv')
+AF_dist_2$Ion_Mode <- 'Positive'
+write.csv(AF_dist_2, '20210308_AF_pos_diff_das_cor.csv')
 
 BF_dist_2 <-BF_dist
-BF_dist_2$Ion_Mode <- 'Negative'
-write.csv(BF_dist_2, '20210308_BF_neg_diff_das_cor.csv')
+BF_dist_2$Ion_Mode <- 'Positive'
+write.csv(BF_dist_2, '20210308_BF_pos_diff_das_cor.csv')
 
 # Sample Peak intensities and differential intensities
 # AB
-write.csv(resp_int_AB_2, '20210309_AB_neg_resp_ints.csv')
-write.csv(resp_dbl_diff_AB, '20210309_AB_neg_resp_diff.csv')
+write.csv(resp_int_AB_2, '20210309_AB_pos_resp_ints.csv')
+write.csv(resp_dbl_diff_AB, '20210309_AB_pos_resp_diff.csv')
 
 # BF
-write.csv(resp_int_BF_2, '20210309_BF_neg_resp_ints.csv')
-write.csv(resp_dbl_diff_BF, '20210309_BF_neg_resp_diff.csv')
+write.csv(resp_int_BF_2, '20210309_BF_pos_resp_ints.csv')
+write.csv(resp_dbl_diff_BF, '20210309_BF_pos_resp_diff.csv')
 
 # AF
-write.csv(resp_int_AF_2, '20210309_AF_neg_resp_ints.csv')
-write.csv(resp_dbl_diff_AF, '20210309_AF_neg_resp_diff.csv')
+write.csv(resp_int_AF_2, '20210309_AF_pos_resp_ints.csv')
+write.csv(resp_dbl_diff_AF, '20210309_AF_pos_resp_diff.csv')
+
